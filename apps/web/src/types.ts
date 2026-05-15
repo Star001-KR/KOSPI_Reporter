@@ -1,0 +1,112 @@
+export type Sentiment = "positive" | "negative" | "neutral";
+
+export interface HoldingInput {
+  quantity: number | null;
+  average_cost: number | null;
+  market_value: number | null;
+  portfolio_weight: number | null;
+}
+
+export interface Holding extends HoldingInput {
+  id: number;
+  symbol_id: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SymbolRecord {
+  id: number;
+  market: string;
+  code: string;
+  name: string;
+  memo: string | null;
+  created_at: string;
+  updated_at: string;
+  holding: Holding | null;
+}
+
+export interface SymbolLookupResult {
+  market: string;
+  code: string;
+  name: string;
+}
+
+export interface AnalysisResult {
+  id: number;
+  target_type: "news" | "disclosure";
+  target_id: number;
+  summary: string;
+  sentiment: Sentiment;
+  importance: number;
+  portfolio_impact: string;
+  rationale: string | null;
+  model_name: string;
+  model_version: string;
+  created_at: string;
+}
+
+export interface NewsItem {
+  id: number;
+  symbol_id: number;
+  title: string;
+  summary: string | null;
+  source: string | null;
+  original_url: string;
+  canonical_url: string;
+  published_at: string | null;
+  collected_at: string;
+}
+
+export interface Disclosure {
+  id: number;
+  symbol_id: number;
+  rcept_no: string;
+  report_name: string;
+  corp_code: string | null;
+  corp_name: string | null;
+  submitted_at: string | null;
+  original_url: string;
+  collected_at: string;
+}
+
+export interface AnalyzedNewsItem {
+  item: NewsItem;
+  analysis: AnalysisResult | null;
+}
+
+export interface AnalyzedDisclosure {
+  item: Disclosure;
+  analysis: AnalysisResult | null;
+}
+
+export interface SymbolDetail extends SymbolRecord {
+  news_items: AnalyzedNewsItem[];
+  disclosures: AnalyzedDisclosure[];
+}
+
+export interface BriefPosition {
+  symbol: SymbolRecord;
+  news_count: number;
+  disclosure_count: number;
+  latest_collected_at: string | null;
+}
+
+export interface BriefItem {
+  kind: "news" | "disclosure";
+  symbol_id: number;
+  symbol_name: string;
+  title: string;
+  source: string | null;
+  original_url: string;
+  occurred_at: string | null;
+  sentiment: Sentiment | null;
+  importance: number | null;
+}
+
+export interface PortfolioBrief {
+  total_symbols: number;
+  total_market_value: number;
+  latest_collected_at: string | null;
+  positions: BriefPosition[];
+  latest_items: BriefItem[];
+}

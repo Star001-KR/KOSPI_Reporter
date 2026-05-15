@@ -1,0 +1,14 @@
+{
+  "name": "kospi-portfolio-research",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/web"
+  ],
+  "scripts": {
+    "api:dev": "PYTHONPATH=.python-deps:apps/api ${PYTHON:-.venv/bin/python} -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000",
+    "web:dev": "npm --workspace apps/web run dev -- --host 127.0.0.1",
+    "web:build": "npm --workspace apps/web run build",
+    "web:preview": "npm --workspace apps/web run preview -- --host 127.0.0.1"
+  }
+}

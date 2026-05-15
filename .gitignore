@@ -1,0 +1,21 @@
+
+# claude-orchestrator: 워커 관리 폴더 (claude-orchestrator/templates/ 가 단일 소스)
+orchestrator/
+
+# Python
+.venv/
+.python-deps/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Local data and secrets
+data/*.db
+data/*.db-*
+.env
+apps/web/.env
