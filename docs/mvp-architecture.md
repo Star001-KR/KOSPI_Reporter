@@ -31,9 +31,12 @@ NH/NAMUH 계좌 어댑터는 MVP 이후 단계로 둔다.
 
 ```bash
 npm run api:dev
+npm run api:test
 npm run web:dev
 npm run web:build
 ```
+
+API 코드와 테스트는 추가 설치 없이 동작하도록 Python 표준 라이브러리만 사용한다. 외부 HTTP 호출은 `urllib`, 테스트는 `unittest` 기반이다. 새 런타임 의존성이 꼭 필요하면 `apps/api/requirements.txt`에 추가한다.
 
 현재 환경 변수 후보는 `.env.example`에 있다.
 
@@ -227,7 +230,7 @@ GET /api/public/feed?market=KOSPI&type=news
 
 ### MVP-01 OpenDART Corp Code Import
 
-Status: not-started
+Status: done
 
 Depends on: none
 

@@ -236,3 +236,17 @@ class MockActivityResult(BaseModel):
     symbol_id: int
     news_inserted: int
     disclosures_inserted: int
+
+
+class CollectionRunRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    run_type: str
+    status: str
+    started_at: datetime
+    finished_at: datetime | None = None
+    symbols_processed: int
+    news_inserted: int
+    disclosures_inserted: int
+    message: str | None = None

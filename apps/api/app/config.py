@@ -15,6 +15,7 @@ class Settings:
     app_name: str
     database_url: str
     cors_origins: tuple[str, ...]
+    opendart_api_key: str | None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -28,6 +29,7 @@ class Settings:
             cors_origins=tuple(
                 origin.strip() for origin in origins.split(",") if origin.strip()
             ),
+            opendart_api_key=os.getenv("OPENDART_API_KEY") or None,
         )
 
 
