@@ -284,7 +284,7 @@ Verification:
 
 ### MVP-03 Naver News Collector
 
-Status: not-started
+Status: done
 
 Depends on: none
 

@@ -16,6 +16,8 @@ class Settings:
     database_url: str
     cors_origins: tuple[str, ...]
     opendart_api_key: str | None
+    naver_client_id: str | None
+    naver_client_secret: str | None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -30,6 +32,8 @@ class Settings:
                 origin.strip() for origin in origins.split(",") if origin.strip()
             ),
             opendart_api_key=os.getenv("OPENDART_API_KEY") or None,
+            naver_client_id=os.getenv("NAVER_CLIENT_ID") or None,
+            naver_client_secret=os.getenv("NAVER_CLIENT_SECRET") or None,
         )
 
 
