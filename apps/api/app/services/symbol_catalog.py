@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
-from html.parser import HTMLParser
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -16,25 +16,30 @@ class ListedSymbol:
 
 
 SUPPORTED_MARKETS = frozenset({"KOSPI", "KOSDAQ"})
-KIND_CORP_LIST_URL = "https://kind.krx.co.kr/corpgeneral/corpList.do"
-KIND_MARKET_TYPES = {
-    "KOSPI": "stockMkt",
-    "KOSDAQ": "kosdaqMkt",
-}
+# The KRX stock finder enumerates every listed share — common and preferred
+# alike — so preferred stocks (e.g. 삼성전자우) are searchable. The KIND
+# corporation list only carried one row per company, hiding preferred shares.
+KRX_DATA_URL = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
+KRX_DATA_REFERER = "https://data.krx.co.kr/contents/MDC/MDI/mdiLoader/index.cmd"
+KRX_STOCK_FINDER_BLD = "dbms/comm/finder/finder_stkisu"
+KRX_MARKET_CODES = {"STK": "KOSPI", "KSQ": "KOSDAQ"}
 _REQUEST_TIMEOUT_SECONDS = 20.0
 
 KR_LISTED_SYMBOLS: tuple[ListedSymbol, ...] = (
     ListedSymbol("KOSPI", "005930", "삼성전자"),
+    ListedSymbol("KOSPI", "005935", "삼성전자우"),
     ListedSymbol("KOSPI", "000660", "SK하이닉스"),
     ListedSymbol("KOSPI", "035420", "NAVER"),
     ListedSymbol("KOSPI", "035720", "카카오"),
     ListedSymbol("KOSPI", "005380", "현대차"),
+    ListedSymbol("KOSPI", "005385", "현대차우"),
     ListedSymbol("KOSPI", "000270", "기아"),
     ListedSymbol("KOSPI", "068270", "셀트리온"),
     ListedSymbol("KOSPI", "207940", "삼성바이오로직스"),
     ListedSymbol("KOSPI", "373220", "LG에너지솔루션"),
     ListedSymbol("KOSPI", "005490", "POSCO홀딩스"),
     ListedSymbol("KOSPI", "051910", "LG화학"),
+    ListedSymbol("KOSPI", "051915", "LG화학우"),
     ListedSymbol("KOSPI", "006400", "삼성SDI"),
     ListedSymbol("KOSPI", "105560", "KB금융"),
     ListedSymbol("KOSPI", "055550", "신한지주"),
@@ -90,109 +95,56 @@ KR_LISTED_SYMBOLS: tuple[ListedSymbol, ...] = (
 )
 
 
-class _KindTableParser(HTMLParser):
-    """Extract rows from the KRX/KIND Excel-download HTML table."""
+def parse_krx_stock_finder(payload: bytes) -> list[ListedSymbol]:
+    """Parse the KRX stock-finder JSON into the runtime symbol catalog.
 
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.rows: list[list[str]] = []
-        self._row: list[str] | None = None
-        self._cell_chunks: list[str] | None = None
-
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
-        if tag == "tr":
-            self._row = []
-        elif tag in {"td", "th"} and self._row is not None:
-            self._cell_chunks = []
-
-    def handle_endtag(self, tag: str) -> None:
-        if (
-            tag in {"td", "th"}
-            and self._row is not None
-            and self._cell_chunks is not None
-        ):
-            self._row.append(" ".join("".join(self._cell_chunks).split()))
-            self._cell_chunks = None
-        elif tag == "tr":
-            if self._row:
-                self.rows.append(self._row)
-            self._row = None
-            self._cell_chunks = None
-
-    def handle_data(self, data: str) -> None:
-        if self._cell_chunks is not None:
-            self._cell_chunks.append(data)
-
-
-def parse_kind_corp_list(payload: bytes, market: str) -> list[ListedSymbol]:
-    """Parse the official KRX/KIND listed-corporation download."""
-    normalized_market = normalize_market(market)
-    if normalized_market is None:
+    The finder lists every listed share, so preferred stocks arrive alongside
+    their common-stock siblings. Rows outside KOSPI/KOSDAQ (e.g. KONEX) and any
+    with a malformed short code are skipped.
+    """
+    try:
+        rows = json.loads(payload).get("block1", [])
+    except (ValueError, AttributeError):
         return []
-    parser = _KindTableParser()
-    parser.feed(payload.decode("euc-kr", errors="replace"))
-    parser.close()
 
     symbols: list[ListedSymbol] = []
-    header = next(
-        (
-            row
-            for row in parser.rows
-            if "회사명" in row and "종목코드" in row
-        ),
-        [],
-    )
-    try:
-        name_index = header.index("회사명")
-        code_index = header.index("종목코드")
-    except ValueError:
-        name_index = 0
-        code_index = 1
-    market_index = header.index("시장구분") if "시장구분" in header else None
-
-    def market_from_row(row: list[str]) -> str:
-        if market_index is None or market_index >= len(row):
-            return normalized_market
-        label = compact(row[market_index])
-        if label in {"유가", "kospi"}:
-            return "KOSPI"
-        if label in {"코스닥", "kosdaq"}:
-            return "KOSDAQ"
-        return normalized_market
-
-    for row in parser.rows:
-        if len(row) <= max(name_index, code_index):
+    for row in rows:
+        if not isinstance(row, dict):
             continue
-        name = normalize_text(row[name_index])
-        code = normalize_code(row[code_index])
-        if not name or not code or not code.isalnum() or len(code) != 6:
+        market = KRX_MARKET_CODES.get((row.get("marketCode") or "").strip().upper())
+        code = normalize_code(row.get("short_code"))
+        name = normalize_text(row.get("codeName"))
+        if market is None or not code or not name:
             continue
-        symbols.append(ListedSymbol(market_from_row(row), code, name))
+        if not code.isalnum() or len(code) != 6:
+            continue
+        symbols.append(ListedSymbol(market, code, name))
     return symbols
 
 
-def _download_kind_corp_list(market: str) -> bytes:
-    market_type = KIND_MARKET_TYPES[market]
-    params = {
-        "method": "download",
-        "searchType": "13",
-        "marketType": market_type,
-    }
-    url = f"{KIND_CORP_LIST_URL}?{urlencode(params)}"
-    request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+def _download_krx_stock_finder() -> bytes:
+    body = urlencode(
+        {
+            "bld": KRX_STOCK_FINDER_BLD,
+            "mktsel": "ALL",
+            "searchText": "",
+            "typeNo": "0",
+        }
+    ).encode()
+    request = Request(
+        KRX_DATA_URL,
+        data=body,
+        headers={"User-Agent": "Mozilla/5.0", "Referer": KRX_DATA_REFERER},
+    )
     with urlopen(request, timeout=_REQUEST_TIMEOUT_SECONDS) as response:
         return response.read()
 
 
 @lru_cache(maxsize=1)
 def _krx_listed_symbols() -> tuple[ListedSymbol, ...]:
-    symbols: list[ListedSymbol] = []
-    for market in ("KOSPI", "KOSDAQ"):
-        symbols.extend(parse_kind_corp_list(_download_kind_corp_list(market), market))
+    symbols = parse_krx_stock_finder(_download_krx_stock_finder())
     if not symbols:
-        raise RuntimeError("KRX/KIND listed symbol catalog is empty.")
+        raise RuntimeError("KRX listed symbol catalog is empty.")
     return tuple(symbols)
 
 
@@ -201,9 +153,9 @@ def listed_symbols(
 ) -> tuple[ListedSymbol, ...]:
     """Return the runtime KOSPI/KOSDAQ symbol catalog.
 
-    KRX/KIND is the source of truth. The small static list is kept as a local
-    fallback so development and tests still work when the official download is
-    temporarily unavailable.
+    The KRX stock finder is the source of truth. The small static list is kept
+    as a local fallback so development and tests still work when the official
+    download is temporarily unavailable.
     """
     try:
         current = loader()
