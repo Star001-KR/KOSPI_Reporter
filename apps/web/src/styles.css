@@ -189,6 +189,10 @@ a {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
   font-family: var(--font-serif);
   font-size: var(--fs-18);
   font-weight: 700;

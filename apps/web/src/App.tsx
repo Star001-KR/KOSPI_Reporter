@@ -1049,10 +1049,10 @@ function AppBar({
 }) {
   return (
     <header className="app-bar">
-      <div className="logo">
-        <div className="logo-mark">k</div>
+      <button type="button" className="logo" onClick={() => setView("dashboard")}>
+        <span className="logo-mark">k</span>
         <span>KOSPI Reporter</span>
-      </div>
+      </button>
       <nav className="nav" aria-label="주요 화면">
         <button
           className="nav-item"
