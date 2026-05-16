@@ -30,6 +30,7 @@ class Settings:
     google_oauth_client_secret: str | None
     google_oauth_redirect_uri: str
     auth_cookie_secure: bool
+    auth_cookie_samesite: str
     auth_session_days: int
 
     @classmethod
@@ -57,6 +58,7 @@ class Settings:
             ),
             auth_cookie_secure=os.getenv("AUTH_COOKIE_SECURE", "").lower()
             in {"1", "true", "yes"},
+            auth_cookie_samesite=os.getenv("AUTH_COOKIE_SAMESITE", "lax").lower(),
             auth_session_days=int(os.getenv("AUTH_SESSION_DAYS", "30")),
         )
 
