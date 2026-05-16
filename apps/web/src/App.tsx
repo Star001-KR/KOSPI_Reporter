@@ -22,7 +22,12 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import type { ReactNode } from "react";
 
 import { api } from "./api";
-import { loadWatchlist, saveWatchlist, upsertWatchlistEntry } from "./storage";
+import {
+  loadWatchlist,
+  saveWatchlist,
+  upsertWatchlistEntry,
+  watchlistKey,
+} from "./storage";
 import type {
   AnalysisResult,
   CollectionRun,
@@ -365,10 +370,14 @@ function App() {
     return `${minutes}:${String(seconds).padStart(2, "0")}`;
   }, [secondsLeft]);
 
-  const issues = useMemo(() => buildIssues(details), [details]);
+  const watchedDetails = useMemo(() => {
+    const keys = new Set(watchlist.map((entry) => watchlistKey(entry)));
+    return details.filter((detail) => keys.has(watchlistKey(detail)));
+  }, [watchlist, details]);
+  const issues = useMemo(() => buildIssues(watchedDetails), [watchedDetails]);
   const stocks = useMemo(
-    () => buildStocks(watchlist, details, issues),
-    [watchlist, details, issues],
+    () => buildStocks(watchlist, watchedDetails, issues),
+    [watchlist, watchedDetails, issues],
   );
   const registeredCodes = useMemo(
     () => watchlist.map((entry) => entry.code),
@@ -388,17 +397,15 @@ function App() {
 
   useEffect(() => {
     refresh()
-      .then(() => {
-        // A first-time visitor (empty watchlist) lands on the public feed.
-        if (loadWatchlist().length === 0) {
-          setView("feed");
-        }
-      })
       .catch((err: Error) => setError(err.message))
       .finally(() => setIsLoading(false));
   }, [refresh]);
 
   useEffect(() => {
+    if (!issues.length && selectedIssueId) {
+      setSelectedIssueId(null);
+      return;
+    }
     if (!selectedIssueId && issues.length) {
       setSelectedIssueId(issues[0].id);
     }
@@ -910,6 +917,8 @@ function Feed({
   setSelectedIssueId: (id: string | null) => void;
 }) {
   const [query, setQuery] = useState("");
+  const emptyMessage =
+    stocks.length === 0 ? "등록한 종목이 아직 없어요" : "조건에 맞는 항목이 없어요";
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return issues.filter((issue) => {
@@ -949,10 +958,12 @@ function Feed({
         <div className="feed-list">
           {visible.length === 0 && (
             <div className="feed-pane-empty">
-              <span>조건에 맞는 항목이 없어요</span>
-              <Button size="sm" variant="ghost" onClick={() => setFilter({})}>
-                필터 초기화
-              </Button>
+              <span>{emptyMessage}</span>
+              {stocks.length > 0 && (
+                <Button size="sm" variant="ghost" onClick={() => setFilter({})}>
+                  필터 초기화
+                </Button>
+              )}
             </div>
           )}
           {visible.map((issue) => (

@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from functools import lru_cache
+from html.parser import HTMLParser
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 
 @dataclass(frozen=True)
@@ -11,6 +16,12 @@ class ListedSymbol:
 
 
 SUPPORTED_MARKETS = frozenset({"KOSPI", "KOSDAQ"})
+KIND_CORP_LIST_URL = "https://kind.krx.co.kr/corpgeneral/corpList.do"
+KIND_MARKET_TYPES = {
+    "KOSPI": "stockMkt",
+    "KOSDAQ": "kosdaqMkt",
+}
+_REQUEST_TIMEOUT_SECONDS = 20.0
 
 KR_LISTED_SYMBOLS: tuple[ListedSymbol, ...] = (
     ListedSymbol("KOSPI", "005930", "삼성전자"),
@@ -79,6 +90,132 @@ KR_LISTED_SYMBOLS: tuple[ListedSymbol, ...] = (
 )
 
 
+class _KindTableParser(HTMLParser):
+    """Extract rows from the KRX/KIND Excel-download HTML table."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.rows: list[list[str]] = []
+        self._row: list[str] | None = None
+        self._cell_chunks: list[str] | None = None
+
+    def handle_starttag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        if tag == "tr":
+            self._row = []
+        elif tag in {"td", "th"} and self._row is not None:
+            self._cell_chunks = []
+
+    def handle_endtag(self, tag: str) -> None:
+        if (
+            tag in {"td", "th"}
+            and self._row is not None
+            and self._cell_chunks is not None
+        ):
+            self._row.append(" ".join("".join(self._cell_chunks).split()))
+            self._cell_chunks = None
+        elif tag == "tr":
+            if self._row:
+                self.rows.append(self._row)
+            self._row = None
+            self._cell_chunks = None
+
+    def handle_data(self, data: str) -> None:
+        if self._cell_chunks is not None:
+            self._cell_chunks.append(data)
+
+
+def parse_kind_corp_list(payload: bytes, market: str) -> list[ListedSymbol]:
+    """Parse the official KRX/KIND listed-corporation download."""
+    normalized_market = normalize_market(market)
+    if normalized_market is None:
+        return []
+    parser = _KindTableParser()
+    parser.feed(payload.decode("euc-kr", errors="replace"))
+    parser.close()
+
+    symbols: list[ListedSymbol] = []
+    header = next(
+        (
+            row
+            for row in parser.rows
+            if "회사명" in row and "종목코드" in row
+        ),
+        [],
+    )
+    try:
+        name_index = header.index("회사명")
+        code_index = header.index("종목코드")
+    except ValueError:
+        name_index = 0
+        code_index = 1
+    market_index = header.index("시장구분") if "시장구분" in header else None
+
+    def market_from_row(row: list[str]) -> str:
+        if market_index is None or market_index >= len(row):
+            return normalized_market
+        label = compact(row[market_index])
+        if label in {"유가", "kospi"}:
+            return "KOSPI"
+        if label in {"코스닥", "kosdaq"}:
+            return "KOSDAQ"
+        return normalized_market
+
+    for row in parser.rows:
+        if len(row) <= max(name_index, code_index):
+            continue
+        name = normalize_text(row[name_index])
+        code = normalize_code(row[code_index])
+        if not name or not code or not code.isalnum() or len(code) != 6:
+            continue
+        symbols.append(ListedSymbol(market_from_row(row), code, name))
+    return symbols
+
+
+def _download_kind_corp_list(market: str) -> bytes:
+    market_type = KIND_MARKET_TYPES[market]
+    params = {
+        "method": "download",
+        "searchType": "13",
+        "marketType": market_type,
+    }
+    url = f"{KIND_CORP_LIST_URL}?{urlencode(params)}"
+    request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urlopen(request, timeout=_REQUEST_TIMEOUT_SECONDS) as response:
+        return response.read()
+
+
+@lru_cache(maxsize=1)
+def _krx_listed_symbols() -> tuple[ListedSymbol, ...]:
+    symbols: list[ListedSymbol] = []
+    for market in ("KOSPI", "KOSDAQ"):
+        symbols.extend(parse_kind_corp_list(_download_kind_corp_list(market), market))
+    if not symbols:
+        raise RuntimeError("KRX/KIND listed symbol catalog is empty.")
+    return tuple(symbols)
+
+
+def listed_symbols(
+    loader: Callable[[], tuple[ListedSymbol, ...]] = _krx_listed_symbols,
+) -> tuple[ListedSymbol, ...]:
+    """Return the runtime KOSPI/KOSDAQ symbol catalog.
+
+    KRX/KIND is the source of truth. The small static list is kept as a local
+    fallback so development and tests still work when the official download is
+    temporarily unavailable.
+    """
+    try:
+        current = loader()
+    except Exception:
+        return KR_LISTED_SYMBOLS
+
+    merged: dict[tuple[str, str], ListedSymbol] = {}
+    for item in current:
+        merged.setdefault((item.market, item.code), item)
+    return tuple(merged.values()) or KR_LISTED_SYMBOLS
+
+
 def normalize_market(value: str | None) -> str | None:
     if value is None:
         return None
@@ -121,9 +258,10 @@ def lookup_symbols(
     query_name = compact(normalized_query)
 
     def candidates(use_market: bool) -> list[ListedSymbol]:
+        source = listed_symbols()
         if not use_market or normalized_market is None:
-            return list(KR_LISTED_SYMBOLS)
-        return [item for item in KR_LISTED_SYMBOLS if item.market == normalized_market]
+            return list(source)
+        return [item for item in source if item.market == normalized_market]
 
     def scored(items: list[ListedSymbol]) -> list[tuple[int, ListedSymbol]]:
         matches: list[tuple[int, ListedSymbol]] = []
