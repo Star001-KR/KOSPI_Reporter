@@ -64,5 +64,5 @@ npm run web:dev
 1. OpenDART `corp_code` import
 2. OpenDART 공시 수집기
 3. Naver 뉴스 검색 수집기
-4. 분석기 어댑터
+4. LLM 기반 분석기 (룰 기반 분석기는 `packages/core`에 구현됨)
 5. 스케줄러/Worker 실행 이력

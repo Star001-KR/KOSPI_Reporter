@@ -36,9 +36,11 @@ Web UI
 
 수집기는 원문 데이터를 저장하고, 분석기는 저장된 원문을 읽어 별도 분석 결과를 만든다. 원문과 분석 결과를 분리해 모델 교체, 재분석, 수집 실패 복구를 쉽게 만든다.
 
-향후 추가할 어댑터:
+어댑터 계약은 `packages/core`의 `kospi_core.contracts`에 정의한다.
 
-- `DisclosureCollector`: OpenDART
-- `NewsCollector`: Naver News Search API
-- `Analyzer`: LLM 또는 룰 기반 분석
-- `BrokerAdapter`: NH/NAMUH 보유 종목 동기화
+- `NewsCollector`: 종목별 뉴스 원문 수집 (구현 예정: Naver News Search API)
+- `DisclosureCollector`: 종목별 공시 원문 수집 (구현 예정: OpenDART)
+- `Analyzer`: 원문을 감성ㆍ중요도ㆍ포트폴리오 영향으로 분류
+  - `RuleBasedAnalyzer`: 외부 키 없이 키워드 규칙으로 동작 (구현 완료)
+  - LLM 기반 분석기는 동일 프로토콜로 교체
+- `BrokerAdapter`: NH/NAMUH 보유 종목 동기화 (구현 예정)
