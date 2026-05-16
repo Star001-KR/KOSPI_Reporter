@@ -32,6 +32,7 @@ NH/NAMUH 계좌 어댑터는 MVP 이후 단계로 둔다.
 ```bash
 npm run api:dev
 npm run api:test
+npm run worker
 npm run web:dev
 npm run web:build
 ```
@@ -389,7 +390,7 @@ Verification:
 
 ### MVP-07 Scheduler
 
-Status: not-started
+Status: done
 
 Depends on: MVP-05
 

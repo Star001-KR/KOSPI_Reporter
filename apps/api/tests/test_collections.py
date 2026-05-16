@@ -27,7 +27,11 @@ from app.routers.collections import (
     trigger_collection_run,
 )
 from app.schemas import CollectionRunRequest
-from app.services.collections import CollectionOptions, run_collection
+from app.services.collections import (
+    CollectionOptions,
+    run_collection,
+    run_scheduled_collection,
+)
 
 _CORP_XML = (
     "<result><list><corp_code>00126380</corp_code>"
@@ -247,6 +251,31 @@ class CollectionRunAPITests(_DbTestCase):
         with self.assertRaises(HTTPException) as ctx:
             get_collection_run(999999, db=self.db)
         self.assertEqual(ctx.exception.status_code, 404)
+
+
+class ScheduledCollectionTests(_DbTestCase):
+    _ANALYZE_ONLY = CollectionOptions(
+        include_disclosures=False, include_news=False, analyze=True
+    )
+
+    def test_skips_when_a_collection_is_in_progress(self) -> None:
+        self.db.add(CollectionRun(run_type="collection", status="running"))
+        self.db.commit()
+        result = run_scheduled_collection(self.db, self._ANALYZE_ONLY)
+        self.assertIsNone(result)
+
+    def test_runs_when_no_collection_in_progress(self) -> None:
+        result = run_scheduled_collection(self.db, self._ANALYZE_ONLY)
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.run_type, "collection")
+
+    def test_finished_run_does_not_block_next_tick(self) -> None:
+        # a previous *finished* run must not be treated as in progress
+        self.db.add(CollectionRun(run_type="collection", status="success"))
+        self.db.commit()
+        result = run_scheduled_collection(self.db, self._ANALYZE_ONLY)
+        self.assertIsNotNone(result)
 
 
 if __name__ == "__main__":

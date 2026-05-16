@@ -165,3 +165,27 @@ def run_collection(
         run.message = f"수집 실행 중 예상치 못한 오류: {exc}"
         db.commit()
     return run
+
+
+def _collection_in_progress(db: Session) -> bool:
+    """True when a unified collection run is currently in progress."""
+    running = db.execute(
+        select(CollectionRun.id)
+        .where(CollectionRun.run_type == COLLECTION_RUN_TYPE)
+        .where(CollectionRun.status == "running")
+        .limit(1)
+    ).first()
+    return running is not None
+
+
+def run_scheduled_collection(
+    db: Session, options: CollectionOptions | None = None
+) -> CollectionRun | None:
+    """Run one collection unless one is already in progress.
+
+    Returns the recorded :class:`CollectionRun`, or ``None`` when the tick was
+    skipped because another collection run had not finished yet.
+    """
+    if _collection_in_progress(db):
+        return None
+    return run_collection(db, options or CollectionOptions())
