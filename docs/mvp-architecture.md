@@ -528,7 +528,7 @@ Verification:
 
 ### MVP-12 Public Operations And Monetization Readiness
 
-Status: not-started
+Status: done
 
 Depends on: MVP-11
 

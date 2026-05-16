@@ -504,10 +504,12 @@ function App() {
         )}
       </main>
 
+      <AdSlot slot="page-bottom" />
+
       <footer className="app-footer">
-        KOSPI Reporter는 OpenDART 공시와 Naver 뉴스를 수집·요약해 제공하는 정보
-        서비스입니다. 투자 조언이 아니며, 투자 판단과 그 결과의 책임은 이용자
-        본인에게 있습니다.
+        <strong>KOSPI Reporter</strong> — OpenDART 공시와 Naver 뉴스를 수집·요약해
+        제공하는 정보 서비스입니다. 투자 조언이 아니며, 투자 판단과 그 결과의
+        책임은 이용자 본인에게 있습니다.
       </footer>
 
       <RegisterModal
@@ -1629,6 +1631,14 @@ function Chip({
 
 function MktChip({ market }: { market: string }) {
   return <span className="chip chip--mkt">{market}</span>;
+}
+
+/**
+ * Reserved ad-slot position (MVP-12). Renders an inert container so the layout
+ * has a defined place for ads; a later ticket wires an ad network in.
+ */
+function AdSlot({ slot }: { slot: string }) {
+  return <div className="ad-slot" data-ad-slot={slot} aria-hidden="true" />;
 }
 
 function TypeBadge({ type }: { type: IssueType }) {

@@ -1135,6 +1135,13 @@ a {
   text-align: center;
 }
 
+/* 광고 슬롯 (MVP-12): 비어 있으면 공간을 차지하지 않고, 광고 연동 시 사용한다. */
+.ad-slot:not(:empty) {
+  display: flex;
+  justify-content: center;
+  padding: var(--sp-3) var(--sp-5);
+}
+
 .feed {
   display: grid;
   flex: 1;
