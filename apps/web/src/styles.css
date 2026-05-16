@@ -171,6 +171,102 @@ a {
   overflow: hidden;
 }
 
+.login-shell {
+  display: grid;
+  width: min(1440px, 100%);
+  min-height: 100vh;
+  margin: 0 auto;
+  place-items: center;
+  padding: var(--sp-6);
+}
+
+.login-panel {
+  display: flex;
+  width: min(420px, 100%);
+  flex-direction: column;
+  gap: var(--sp-5);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-3);
+  padding: var(--sp-8);
+}
+
+.login-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--bg);
+  font-family: var(--font-serif);
+  font-size: var(--fs-24);
+  font-style: italic;
+  font-weight: 700;
+}
+
+.login-eyebrow {
+  margin: 0 0 var(--sp-1);
+  color: var(--ink-muted);
+  font-size: var(--fs-12);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.login-panel h1 {
+  margin: 0;
+  font-size: var(--fs-28);
+  line-height: 1.2;
+}
+
+.login-panel p {
+  margin: var(--sp-3) 0 0;
+  color: var(--ink-soft);
+}
+
+.login-error {
+  border: 1px solid var(--neg);
+  border-radius: var(--r-sm);
+  background: var(--neg-soft);
+  color: var(--neg);
+  padding: var(--sp-3);
+  font-size: var(--fs-13);
+}
+
+.login-loading,
+.google-login-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.google-login-btn:hover {
+  border-color: var(--line-strong);
+  background: var(--elev);
+}
+
+.google-g {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  color: #4285f4;
+  font-weight: 800;
+}
+
 .app-bar {
   position: sticky;
   top: 0;
@@ -259,6 +355,49 @@ a {
   align-items: center;
   gap: var(--sp-2);
   margin-left: auto;
+}
+
+.account-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 190px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--ink-soft);
+  padding: 3px 9px 3px 4px;
+  font-size: var(--fs-12);
+  font-weight: 600;
+}
+
+.account-pill img,
+.account-avatar-fallback {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  border-radius: 50%;
+}
+
+.account-pill img {
+  object-fit: cover;
+}
+
+.account-avatar-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ink);
+  color: var(--bg);
+  font-size: var(--fs-11);
+}
+
+.account-pill span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .status-pill {

@@ -11,6 +11,7 @@ import {
   GripVertical,
   Info,
   Lightbulb,
+  LogOut,
   Moon,
   Paperclip,
   Plus,
@@ -35,6 +36,7 @@ import {
 } from "./storage";
 import type {
   AnalysisResult,
+  AuthUser,
   DailyPrice,
   Sentiment,
   SymbolDetail,
@@ -740,6 +742,9 @@ function App() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notifications, setNotifications] = useState<SystemNotification[]>([]);
   const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isBusy, setIsBusy] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(AUTO_REFRESH_SECONDS);
@@ -787,6 +792,28 @@ function App() {
   }, [theme]);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const loginError = params.get("auth_error");
+    if (loginError) {
+      setAuthError("Google 로그인에 실패했습니다. 잠시 후 다시 시도해 주세요.");
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (params.get("auth")) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
+    api
+      .getMe()
+      .then((user) => {
+        setAuthUser(user);
+        setAuthError(null);
+      })
+      .catch(() => {
+        setAuthUser(null);
+      })
+      .finally(() => setAuthLoading(false));
+  }, []);
+
+  useEffect(() => {
     const timer = window.setInterval(() => {
       setSecondsLeft((value) => (value <= 0 ? AUTO_REFRESH_SECONDS : value - 1));
     }, 1000);
@@ -825,6 +852,11 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!authUser) {
+      setIsLoading(false);
+      return;
+    }
+    setIsLoading(true);
     refresh()
       .catch((err: Error) =>
         pushNotification({
@@ -834,7 +866,7 @@ function App() {
         }),
       )
       .finally(() => setIsLoading(false));
-  }, [refresh, pushNotification]);
+  }, [refresh, pushNotification, authUser]);
 
   // Load real daily closes for each symbol once details arrive; a per-symbol
   // failure just yields an empty series so the rest of the dashboard is fine.
@@ -953,6 +985,17 @@ function App() {
     });
   }
 
+  async function handleLogout() {
+    await runAction(async () => {
+      await api.logout();
+      setAuthUser(null);
+      setNotifications([]);
+      setView("dashboard");
+    }, {
+      errorTitle: "로그아웃 실패",
+    });
+  }
+
   function goToFeed(stockCode?: string) {
     setFilter(stockCode ? { stockCode } : {});
     setSelectedIssueId(null);
@@ -996,6 +1039,14 @@ function App() {
 
   const watchlistEmpty = !isLoading && watchlist.length === 0;
 
+  if (authLoading) {
+    return <LoginGate mode="checking" error={authError} />;
+  }
+
+  if (!authUser) {
+    return <LoginGate mode="login" error={authError} />;
+  }
+
   return (
     <div className="app">
       <AppBar
@@ -1013,6 +1064,8 @@ function App() {
         onClearNotifications={clearNotifications}
         theme={theme}
         setTheme={setTheme}
+        user={authUser}
+        onLogout={handleLogout}
       />
 
       <main className="app-main">
@@ -1064,6 +1117,43 @@ function App() {
   );
 }
 
+function LoginGate({
+  mode,
+  error,
+}: {
+  mode: "checking" | "login";
+  error: string | null;
+}) {
+  const isChecking = mode === "checking";
+  return (
+    <div className="login-shell">
+      <section className="login-panel" aria-live="polite">
+        <div className="login-mark">k</div>
+        <div>
+          <p className="login-eyebrow">KOSPI Reporter</p>
+          <h1>{isChecking ? "로그인 상태 확인 중" : "로그인이 필요합니다"}</h1>
+          <p>
+            Google 계정으로 로그인하면 같은 브라우저에서 다시 접속할 때
+            로그인 상태가 유지됩니다.
+          </p>
+        </div>
+        {error && <div className="login-error">{error}</div>}
+        {isChecking ? (
+          <div className="login-loading">
+            <RefreshCw size={15} className="spin" />
+            세션 확인 중
+          </div>
+        ) : (
+          <a className="google-login-btn" href={api.googleLoginUrl()}>
+            <span className="google-g">G</span>
+            Google로 로그인
+          </a>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function AppBar({
   view,
   setView,
@@ -1079,6 +1169,8 @@ function AppBar({
   onClearNotifications,
   theme,
   setTheme,
+  user,
+  onLogout,
 }: {
   view: ViewName;
   setView: (view: ViewName) => void;
@@ -1094,7 +1186,11 @@ function AppBar({
   onClearNotifications: () => void;
   theme: "light" | "dark";
   setTheme: (theme: "light" | "dark") => void;
+  user: AuthUser;
+  onLogout: () => void;
 }) {
+  const userLabel = user.display_name || user.email || "로그인 사용자";
+  const avatarInitial = userLabel.trim().charAt(0).toUpperCase() || "U";
   return (
     <header className="app-bar">
       <button type="button" className="logo" onClick={() => setView("dashboard")}>
@@ -1136,6 +1232,17 @@ function AppBar({
         <Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={onAddStock}>
           종목 추가
         </Button>
+        <div className="account-pill" title={user.email ?? userLabel}>
+          {user.avatar_url ? (
+            <img src={user.avatar_url} alt="" />
+          ) : (
+            <span className="account-avatar-fallback">{avatarInitial}</span>
+          )}
+          <span>{userLabel}</span>
+        </div>
+        <IconButton title="로그아웃" onClick={onLogout}>
+          <LogOut size={17} />
+        </IconButton>
         <IconButton
           title={theme === "dark" ? "라이트 모드" : "다크 모드"}
           onClick={() => setTheme(theme === "dark" ? "light" : "dark")}

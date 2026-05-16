@@ -60,6 +60,11 @@ npm run web:dev
 - Web: `http://127.0.0.1:5173`
 - Health: `http://127.0.0.1:8000/api/health`
 
+웹은 Google OAuth 로그인 후 사용할 수 있습니다. Google Cloud Console에서 OAuth
+웹 클라이언트를 만들고 redirect URI를
+`http://127.0.0.1:8000/api/auth/google/callback`로 등록한 뒤 `.env`에
+`GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`을 설정합니다.
+
 웹의 수집 버튼은 `/api/collections/run`을 호출해 등록 종목의 공시·뉴스를 수집하고 분석합니다. OpenDART/Naver API 키는 `.env`에 설정합니다(`.env.example` 참고). 주기 수집은 `npm run worker`로 실행합니다.
 
 ## 테스트

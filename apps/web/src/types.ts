@@ -31,6 +31,15 @@ export interface SymbolLookupResult {
   name: string;
 }
 
+export interface AuthUser {
+  id: number;
+  email: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+  created_at: string;
+  last_login_at: string | null;
+}
+
 export interface AnalysisResult {
   id: number;
   target_type: "news" | "disclosure";

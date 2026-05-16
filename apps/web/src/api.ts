@@ -1,4 +1,5 @@
 import type {
+  AuthUser,
   CollectionRun,
   DailyPrice,
   PortfolioBrief,
@@ -12,6 +13,7 @@ const API_BASE_URL =
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
+    credentials: "include",
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -50,6 +52,12 @@ export interface SymbolPayload {
 }
 
 export const api = {
+  googleLoginUrl: () => `${API_BASE_URL}/api/auth/google/start`,
+  getMe: () => request<AuthUser>("/api/me"),
+  logout: () =>
+    request<void>("/api/auth/logout", {
+      method: "POST",
+    }),
   getBrief: () => request<PortfolioBrief>("/api/portfolio/brief"),
   listSymbols: () => request<SymbolRecord[]>("/api/symbols"),
   lookupSymbols: (q: string, market: string) =>

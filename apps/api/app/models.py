@@ -98,6 +98,86 @@ class DartCorpCode(Base):
     )
 
 
+class User(Base):
+    __tablename__ = "users"
+    __table_args__ = (
+        UniqueConstraint("email", name="uq_users_email"),
+        Index("ix_users_email", "email"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str | None] = mapped_column(String(320))
+    display_name: Mapped[str | None] = mapped_column(String(160))
+    avatar_url: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    identities: Mapped[list[UserIdentity]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    sessions: Mapped[list[AuthSession]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
+
+class UserIdentity(Base):
+    __tablename__ = "user_identities"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider", "provider_user_id", name="uq_user_identities_provider_user"
+        ),
+        Index("ix_user_identities_user", "user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    provider: Mapped[str] = mapped_column(String(40), nullable=False)
+    provider_user_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(320))
+    raw_payload: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+    user: Mapped[User] = relationship(back_populates="identities")
+
+
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="uq_auth_sessions_token_hash"),
+        Index("ix_auth_sessions_user", "user_id"),
+        Index("ix_auth_sessions_expires", "expires_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+    user: Mapped[User] = relationship(back_populates="sessions")
+
+
 class NewsItem(Base):
     __tablename__ = "news_items"
     __table_args__ = (
