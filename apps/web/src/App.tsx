@@ -534,7 +534,10 @@ function buildClusterIssue(cluster: ResearchIssue[]): ResearchIssue {
 
   return {
     ...representative,
-    id: `cluster-${representative.stockCode}-${clusterId}`,
+    // No stock prefix: a preferred stock and its common stock cluster the
+    // same articles (same clusterId), so a shared id lets read state and the
+    // unread count carry across both.
+    id: `cluster-${clusterId}`,
     occurredAt: sorted[0].occurredAt,
     collectedAt: sorted[0].collectedAt,
     sentiment: aggregateClusterSentiment(sorted, representative),
@@ -1858,7 +1861,7 @@ function Feed({
     stocks.length === 0 ? "등록한 종목이 아직 없어요" : "조건에 맞는 항목이 없어요";
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return issues.filter((issue) => {
+    const filtered = issues.filter((issue) => {
       if (filter.stockCode && issue.stockCode !== filter.stockCode) return false;
       if (filter.type && issue.type !== filter.type) return false;
       if (filter.sentiment && issue.sentiment !== filter.sentiment) return false;
@@ -1871,6 +1874,14 @@ function Feed({
       ) {
         return false;
       }
+      return true;
+    });
+    // A preferred stock shares its common stock's issues, so the same item can
+    // surface under both — collapse duplicates so the feed lists each once.
+    const seen = new Set<string>();
+    return filtered.filter((issue) => {
+      if (seen.has(issue.id)) return false;
+      seen.add(issue.id);
       return true;
     });
   }, [issues, filter, query]);
