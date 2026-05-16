@@ -83,6 +83,17 @@ type ResearchIssue = {
   rationale: string;
   keywords: string[];
   modelVersion: string;
+  clusterSize: number;
+  clusterSources: string[];
+  relatedArticles: RelatedArticle[];
+};
+
+type RelatedArticle = {
+  id: string;
+  title: string;
+  source: string;
+  url: string;
+  occurredAt: string | null;
 };
 
 type FeedFilter = {
@@ -109,6 +120,45 @@ const blankRegisterState: RegisterState = {
   averageCost: "",
   memo: "",
 };
+
+const NEWS_CLUSTER_WINDOW_MS = 24 * 60 * 60 * 1000;
+const NEWS_TIGHT_CLUSTER_WINDOW_MS = 6 * 60 * 60 * 1000;
+const NEWS_SIMILARITY_THRESHOLD = 0.62;
+const NEWS_MIN_SHARED_TERMS = 2;
+
+const NEWS_STOP_TERMS = new Set([
+  "단독",
+  "속보",
+  "종합",
+  "영상",
+  "사진",
+  "그래픽",
+  "기자",
+  "뉴스",
+  "관련",
+  "전망",
+  "분석",
+  "오늘",
+  "내일",
+  "회장",
+  "대표",
+  "삼성",
+  "삼전",
+]);
+
+const NEWS_TERM_ALIASES: Array<{ term: string; pattern: RegExp }> = [
+  { term: "사과", pattern: /사과|사죄|고개\s*숙|대국민\s*사과|비바람/i },
+  { term: "노사", pattern: /노사|노조|사측|총파업|파업|임금|임단협|성과급|연봉|노동/i },
+  { term: "교섭", pattern: /교섭|대화\s*재개|중재|요구|사후조정|중노위/i },
+  { term: "귀국", pattern: /귀국|급히\s*귀국/i },
+  { term: "교체", pattern: /교체|쇄신|전격\s*교체/i },
+  { term: "반도체", pattern: /반도체|메모리|hbm|d램|낸드/i },
+  { term: "실적", pattern: /실적|영업이익|매출|흑자|적자/i },
+  { term: "계약", pattern: /계약|수주|공급|납품/i },
+  { term: "규제", pattern: /규제|제재|조사|소송/i },
+];
+
+const NEWS_STRONG_EVENT_TERMS = new Set(["사과", "노사", "교섭", "귀국", "교체", "계약", "규제"]);
 
 const orbitConfigs = [
   { r: 205, start: 138, period: 118 },
@@ -211,58 +261,314 @@ function analysisKeywords(analysis: AnalysisResult | null): string[] {
   return found.length ? found.slice(0, 5) : ["요약", "중요도", "포트폴리오"];
 }
 
+function issueTime(issue: ResearchIssue): number {
+  const time = new Date(issue.occurredAt ?? issue.collectedAt).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function uniqueValues(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function cleanNewsText(value: string): string {
+  return value
+    .normalize("NFKC")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&quot;|&#34;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&amp;/g, "&")
+    .toLowerCase()
+    .replace(/[“”"'‘’()[\]{}<>·,:;!?~_+*/\\|…—–-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizedNewsTitle(issue: ResearchIssue): string {
+  let text = cleanNewsText(issue.title);
+  const removable = uniqueValues([
+    issue.stockCode,
+    issue.stockName,
+    issue.stockName.replace(/\s+/g, ""),
+    issue.market,
+  ]);
+  removable.forEach((value) => {
+    if (!value) return;
+    text = text.replace(new RegExp(escapeRegExp(cleanNewsText(value)), "gi"), " ");
+  });
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function newsIssueTerms(issue: ResearchIssue): Set<string> {
+  const text = normalizedNewsTitle(issue);
+  const terms = new Set<string>();
+
+  text.split(/\s+/).forEach((term) => {
+    const normalized = term.trim();
+    if (normalized.length < 2) return;
+    if (/^\d+(?:\.\d+)?(?:%|년|월|일|분기|시|분)?$/.test(normalized)) return;
+    if (NEWS_STOP_TERMS.has(normalized)) return;
+    terms.add(normalized);
+  });
+
+  NEWS_TERM_ALIASES.forEach(({ term, pattern }) => {
+    if (pattern.test(text)) {
+      terms.add(term);
+    }
+  });
+
+  return terms;
+}
+
+function charShingles(value: string, size = 2): Set<string> {
+  const compact = value.replace(/\s+/g, "");
+  const chars = Array.from(compact);
+  if (chars.length <= size) {
+    return new Set(compact ? [compact] : []);
+  }
+  return new Set(chars.slice(0, chars.length - size + 1).map((_, index) => chars.slice(index, index + size).join("")));
+}
+
+function diceSimilarity(a: Set<string>, b: Set<string>): number {
+  if (!a.size || !b.size) return 0;
+  let intersection = 0;
+  a.forEach((value) => {
+    if (b.has(value)) intersection += 1;
+  });
+  return (2 * intersection) / (a.size + b.size);
+}
+
+function sharedTermCount(a: Set<string>, b: Set<string>): number {
+  let count = 0;
+  a.forEach((term) => {
+    if (b.has(term)) count += 1;
+  });
+  return count;
+}
+
+function sharedStrongTermCount(a: Set<string>, b: Set<string>): number {
+  let count = 0;
+  NEWS_STRONG_EVENT_TERMS.forEach((term) => {
+    if (a.has(term) && b.has(term)) count += 1;
+  });
+  return count;
+}
+
+function newsTitleSimilarity(a: ResearchIssue, b: ResearchIssue): number {
+  const termsA = newsIssueTerms(a);
+  const termsB = newsIssueTerms(b);
+  const shared = sharedTermCount(termsA, termsB);
+  const containment = shared / Math.max(1, Math.min(termsA.size, termsB.size));
+  const dice = diceSimilarity(charShingles(normalizedNewsTitle(a)), charShingles(normalizedNewsTitle(b)));
+  return Math.max(dice, containment);
+}
+
+function shouldClusterNews(a: ResearchIssue, b: ResearchIssue): boolean {
+  if (a.id === b.id || a.type !== "news" || b.type !== "news") return false;
+  if (a.stockCode !== b.stockCode) return false;
+
+  const gap = Math.abs(issueTime(a) - issueTime(b));
+  if (gap > NEWS_CLUSTER_WINDOW_MS) return false;
+
+  const termsA = newsIssueTerms(a);
+  const termsB = newsIssueTerms(b);
+  const shared = sharedTermCount(termsA, termsB);
+  const strongShared = sharedStrongTermCount(termsA, termsB);
+  const similarity = newsTitleSimilarity(a, b);
+
+  if (strongShared >= 2) return true;
+  if (strongShared >= 1 && shared >= NEWS_MIN_SHARED_TERMS && similarity >= 0.28) return true;
+  if (strongShared >= 1 && gap <= NEWS_TIGHT_CLUSTER_WINDOW_MS && similarity >= 0.18) return true;
+  return shared >= NEWS_MIN_SHARED_TERMS && similarity >= NEWS_SIMILARITY_THRESHOLD;
+}
+
+function relatedArticleFromIssue(issue: ResearchIssue): RelatedArticle {
+  return {
+    id: issue.id,
+    title: issue.title,
+    source: issue.source,
+    url: issue.url,
+    occurredAt: issue.occurredAt,
+  };
+}
+
+function aggregateClusterSentiment(cluster: ResearchIssue[], representative: ResearchIssue): SentKey {
+  const scores = cluster.reduce(
+    (acc, issue) => {
+      acc[issue.sentiment] += issue.importance + 1;
+      return acc;
+    },
+    { pos: 0, neg: 0, neu: 0 } satisfies Record<SentKey, number>,
+  );
+  const best = (Object.keys(scores) as SentKey[]).reduce((winner, sentiment) =>
+    scores[sentiment] > scores[winner] ? sentiment : winner,
+  );
+  return scores[best] > 0 ? best : representative.sentiment;
+}
+
+function representativeScore(issue: ResearchIssue, cluster: ResearchIssue[]): number {
+  const titleLength = Array.from(issue.title).length;
+  const isTruncated = /\.{2,}|…/.test(issue.title);
+  const terms = newsIssueTerms(issue);
+  const centrality =
+    cluster.length <= 1
+      ? 1
+      : cluster
+          .filter((candidate) => candidate.id !== issue.id)
+          .reduce((sum, candidate) => sum + newsTitleSimilarity(issue, candidate), 0) /
+        Math.max(1, cluster.length - 1);
+  const hasSummary = issue.summary.trim() && !issue.summary.includes("대기 중");
+  const hasUrl = Boolean(issue.url);
+  const newest = Math.max(...cluster.map(issueTime));
+  const oldest = Math.min(...cluster.map(issueTime));
+  const recency = newest === oldest ? 1 : (issueTime(issue) - oldest) / (newest - oldest);
+  const readableTitle =
+    (titleLength >= 18 ? 4 : 0) +
+    (titleLength <= 96 ? 3 : 0) +
+    (isTruncated ? -6 : 3) +
+    Math.min(terms.size, 8) * 0.4;
+
+  return (
+    issue.importance * 16 +
+    readableTitle * 2 +
+    centrality * 18 +
+    (hasSummary ? 5 : 0) +
+    (hasUrl ? 3 : 0) +
+    recency
+  );
+}
+
+function pickRepresentative(cluster: ResearchIssue[]): ResearchIssue {
+  return cluster.reduce((best, issue) =>
+    representativeScore(issue, cluster) > representativeScore(best, cluster) ? issue : best,
+  );
+}
+
+function hashString(value: string): string {
+  let hash = 0;
+  Array.from(value).forEach((char) => {
+    hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  });
+  return hash.toString(36);
+}
+
+function buildClusterIssue(cluster: ResearchIssue[]): ResearchIssue {
+  if (cluster.length === 1) {
+    const issue = cluster[0];
+    return {
+      ...issue,
+      clusterSize: 1,
+      clusterSources: uniqueValues([issue.source]),
+      relatedArticles: [relatedArticleFromIssue(issue)],
+    };
+  }
+
+  const sorted = [...cluster].sort((a, b) => issueTime(b) - issueTime(a));
+  const representative = pickRepresentative(sorted);
+  const clusterSources = uniqueValues(sorted.map((issue) => issue.source));
+  const relatedArticles = sorted.map(relatedArticleFromIssue);
+  const clusterId = hashString(sorted.map((issue) => issue.id).sort().join("|"));
+
+  return {
+    ...representative,
+    id: `cluster-${representative.stockCode}-${clusterId}`,
+    occurredAt: sorted[0].occurredAt,
+    collectedAt: sorted[0].collectedAt,
+    sentiment: aggregateClusterSentiment(sorted, representative),
+    importance: Math.max(...sorted.map((issue) => issue.importance)),
+    keywords: uniqueValues(sorted.flatMap((issue) => issue.keywords)).slice(0, 5),
+    clusterSize: sorted.length,
+    clusterSources,
+    relatedArticles,
+  };
+}
+
+function clusterNewsIssues(issues: ResearchIssue[]): ResearchIssue[] {
+  const news = issues.filter((issue) => issue.type === "news").sort((a, b) => issueTime(b) - issueTime(a));
+  const nonNews = issues.filter((issue) => issue.type !== "news");
+  const clusters: ResearchIssue[][] = [];
+
+  news.forEach((issue) => {
+    const matches = clusters.filter((cluster) => cluster.some((member) => shouldClusterNews(issue, member)));
+    if (!matches.length) {
+      clusters.push([issue]);
+      return;
+    }
+
+    const primary = matches[0];
+    primary.push(issue);
+    matches.slice(1).forEach((cluster) => {
+      primary.push(...cluster);
+      clusters.splice(clusters.indexOf(cluster), 1);
+    });
+  });
+
+  return [...nonNews, ...clusters.map(buildClusterIssue)].sort((a, b) => issueTime(b) - issueTime(a));
+}
+
 function buildIssues(details: SymbolDetail[]): ResearchIssue[] {
   const issues = details.flatMap((detail) => {
-    const news = detail.news_items.map(({ item, analysis }) => ({
-      id: `news-${item.id}`,
-      itemId: item.id,
-      stockId: detail.id,
-      stockCode: detail.code,
-      stockName: detail.name,
-      market: detail.market,
-      type: "news" as const,
-      source: item.source ?? "News",
-      title: item.title,
-      url: item.original_url,
-      occurredAt: item.published_at ?? item.collected_at,
-      collectedAt: item.collected_at,
-      sentiment: toSentKey(analysis?.sentiment),
-      importance: analysis?.importance ?? 0,
-      summary: analysis?.summary ?? item.summary ?? "요약 대기 중입니다.",
-      impact: analysis?.portfolio_impact ?? "포트폴리오 영향 분석 대기 중입니다.",
-      rationale: analysis?.rationale ?? "분석 근거가 아직 생성되지 않았습니다.",
-      keywords: analysisKeywords(analysis),
-      modelVersion: analysis?.model_version ?? "v2.1",
-    }));
-    const disclosures = detail.disclosures.map(({ item, analysis }) => ({
-      id: `disc-${item.id}`,
-      itemId: item.id,
-      stockId: detail.id,
-      stockCode: detail.code,
-      stockName: detail.name,
-      market: detail.market,
-      type: "disc" as const,
-      source: "DART",
-      title: item.report_name,
-      url: item.original_url,
-      occurredAt: item.submitted_at ?? item.collected_at,
-      collectedAt: item.collected_at,
-      sentiment: toSentKey(analysis?.sentiment),
-      importance: analysis?.importance ?? 0,
-      summary: analysis?.summary ?? `${item.report_name} 공시가 수집되었습니다.`,
-      impact: analysis?.portfolio_impact ?? "공시 영향 분석 대기 중입니다.",
-      rationale: analysis?.rationale ?? `접수번호 ${item.rcept_no}`,
-      keywords: analysisKeywords(analysis),
-      modelVersion: analysis?.model_version ?? "v2.1",
-    }));
+    const news = detail.news_items.map(({ item, analysis }) => {
+      const issue: ResearchIssue = {
+        id: `news-${item.id}`,
+        itemId: item.id,
+        stockId: detail.id,
+        stockCode: detail.code,
+        stockName: detail.name,
+        market: detail.market,
+        type: "news",
+        source: item.source ?? "News",
+        title: item.title,
+        url: item.original_url,
+        occurredAt: item.published_at ?? item.collected_at,
+        collectedAt: item.collected_at,
+        sentiment: toSentKey(analysis?.sentiment),
+        importance: analysis?.importance ?? 0,
+        summary: analysis?.summary ?? item.summary ?? "요약 대기 중입니다.",
+        impact: analysis?.portfolio_impact ?? "포트폴리오 영향 분석 대기 중입니다.",
+        rationale: analysis?.rationale ?? "분석 근거가 아직 생성되지 않았습니다.",
+        keywords: analysisKeywords(analysis),
+        modelVersion: analysis?.model_version ?? "v2.1",
+        clusterSize: 1,
+        clusterSources: [item.source ?? "News"],
+        relatedArticles: [],
+      };
+      return { ...issue, relatedArticles: [relatedArticleFromIssue(issue)] };
+    });
+    const disclosures = detail.disclosures.map(({ item, analysis }) => {
+      const issue: ResearchIssue = {
+        id: `disc-${item.id}`,
+        itemId: item.id,
+        stockId: detail.id,
+        stockCode: detail.code,
+        stockName: detail.name,
+        market: detail.market,
+        type: "disc",
+        source: "DART",
+        title: item.report_name,
+        url: item.original_url,
+        occurredAt: item.submitted_at ?? item.collected_at,
+        collectedAt: item.collected_at,
+        sentiment: toSentKey(analysis?.sentiment),
+        importance: analysis?.importance ?? 0,
+        summary: analysis?.summary ?? `${item.report_name} 공시가 수집되었습니다.`,
+        impact: analysis?.portfolio_impact ?? "공시 영향 분석 대기 중입니다.",
+        rationale: analysis?.rationale ?? `접수번호 ${item.rcept_no}`,
+        keywords: analysisKeywords(analysis),
+        modelVersion: analysis?.model_version ?? "v2.1",
+        clusterSize: 1,
+        clusterSources: ["DART"],
+        relatedArticles: [],
+      };
+      return { ...issue, relatedArticles: [relatedArticleFromIssue(issue)] };
+    });
     return [...news, ...disclosures];
   });
 
-  return issues.sort(
-    (a, b) =>
-      new Date(b.occurredAt ?? b.collectedAt).getTime() -
-      new Date(a.occurredAt ?? a.collectedAt).getTime(),
-  );
+  return clusterNewsIssues(issues);
 }
 
 function latestCollectedFromDetail(detail: SymbolDetail | undefined): string | null {
@@ -1098,6 +1404,8 @@ function FeedListItem({
   selected: boolean;
   onClick: () => void;
 }) {
+  const sourceLabel = clusteredSourceLabel(issue);
+
   return (
     <button className="feed-item" aria-current={selected ? "true" : "false"} onClick={onClick}>
       <span className={`s-rail s-rail--${issue.sentiment}`} />
@@ -1108,16 +1416,23 @@ function FeedListItem({
           <span>·</span>
           <span className="when">{formatTime(issue.occurredAt)}</span>
           <span>·</span>
-          <span>{issue.source}</span>
+          <span>{sourceLabel}</span>
         </span>
         <span className="title">{issue.title}</span>
         <span className="badges">
           <TypeBadge type={issue.type} />
+          {issue.clusterSize > 1 && <span className="cluster-badge">관련 {issue.clusterSize}건</span>}
           <ImportanceDots value={issue.importance} />
         </span>
       </span>
     </button>
   );
+}
+
+function clusteredSourceLabel(issue: ResearchIssue): string {
+  if (issue.clusterSize <= 1) return issue.source;
+  if (issue.clusterSources.length <= 1) return `${issue.source} · ${issue.clusterSize}건`;
+  return `${issue.clusterSources[0]} 외 ${issue.clusterSources.length - 1}곳`;
 }
 
 function FeedReadingPane({ issue }: { issue: ResearchIssue | null }) {
@@ -1132,6 +1447,8 @@ function FeedReadingPane({ issue }: { issue: ResearchIssue | null }) {
     );
   }
 
+  const sourceLabel = clusteredSourceLabel(issue);
+
   return (
     <div className="feed-pane">
       <article className="feed-article">
@@ -1142,7 +1459,7 @@ function FeedReadingPane({ issue }: { issue: ResearchIssue | null }) {
             <b>{issue.stockName}</b> · {issue.stockCode}
           </span>
           <span>·</span>
-          <span>{issue.source}</span>
+          <span>{sourceLabel}</span>
           <span>·</span>
           <span className="mono">{formatTime(issue.occurredAt)}</span>
           <span className="spacer" />
@@ -1169,6 +1486,14 @@ function FeedReadingPane({ issue }: { issue: ResearchIssue | null }) {
             <span className="pill-label">포트폴리오 영향 </span>
             <span className="pill-value">{issue.importance >= 4 ? "높음" : issue.importance >= 3 ? "중간" : "낮음"}</span>
           </span>
+          {issue.clusterSize > 1 && (
+            <span>
+              <span className="pill-label">관련 기사 </span>
+              <span className="pill-value">
+                {issue.clusterSize}건 · {issue.clusterSources.length}곳
+              </span>
+            </span>
+          )}
           <span className="muted analysis-meta">분석 {issue.modelVersion} · {formatTime(issue.collectedAt)}</span>
         </div>
         <section>
@@ -1199,6 +1524,27 @@ function FeedReadingPane({ issue }: { issue: ResearchIssue | null }) {
             </span>
           </a>
         </section>
+        {issue.clusterSize > 1 && (
+          <section>
+            <h2>관련 기사</h2>
+            <div className="related-list">
+              {issue.relatedArticles.map((article) => (
+                <a
+                  key={`${article.id}-${article.url}`}
+                  className="related-link"
+                  href={article.url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <span className="related-title">{article.title}</span>
+                  <span className="related-meta">
+                    {article.source} · {formatTime(article.occurredAt)}
+                  </span>
+                </a>
+              ))}
+            </div>
+          </section>
+        )}
         <div className="actions">
           <Button icon={<ChevronLeft size={14} />}>이전</Button>
           <span className="spacer" />

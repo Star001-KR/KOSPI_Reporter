@@ -1248,6 +1248,19 @@ a {
   margin-top: 6px;
 }
 
+.cluster-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  background: var(--surface);
+  color: var(--ink-soft);
+  padding: 1px 7px;
+  font-size: var(--fs-10);
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
 .feed-pane {
   position: relative;
   display: flex;
@@ -1379,6 +1392,42 @@ a {
 .open-link {
   color: var(--accent);
   font-weight: 600;
+}
+
+.related-list {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--line-soft);
+}
+
+.related-link {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--ink);
+  padding: var(--sp-3) 0;
+}
+
+.related-link:hover .related-title {
+  color: var(--accent);
+}
+
+.related-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-13);
+  font-weight: 600;
+}
+
+.related-meta {
+  flex: 0 0 auto;
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-10);
 }
 
 .actions {
