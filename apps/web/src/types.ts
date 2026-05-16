@@ -110,3 +110,15 @@ export interface PortfolioBrief {
   positions: BriefPosition[];
   latest_items: BriefItem[];
 }
+
+export interface CollectionRun {
+  id: number;
+  run_type: string;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  symbols_processed: number;
+  news_inserted: number;
+  disclosures_inserted: number;
+  message: string | null;
+}

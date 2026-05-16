@@ -362,7 +362,7 @@ Verification:
 
 ### MVP-06 Web Real Collection UI
 
-Status: not-started
+Status: done
 
 Depends on: MVP-05
 

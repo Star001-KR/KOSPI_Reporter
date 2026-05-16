@@ -24,6 +24,7 @@ import type { ReactNode } from "react";
 import { api, SymbolPayload } from "./api";
 import type {
   AnalysisResult,
+  CollectionRun,
   PortfolioBrief,
   Sentiment,
   SymbolDetail,
@@ -344,6 +345,7 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastRun, setLastRun] = useState<CollectionRun | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(272);
 
   useEffect(() => {
@@ -394,6 +396,7 @@ function App() {
   async function runAction(action: () => Promise<void>) {
     setIsBusy(true);
     setError(null);
+    setLastRun(null);
     try {
       await action();
     } catch (err) {
@@ -405,7 +408,8 @@ function App() {
 
   async function handleRefreshCollection() {
     await runAction(async () => {
-      await Promise.all(symbols.map((symbol) => api.createMockActivity(symbol.id)));
+      const run = await api.runCollection();
+      setLastRun(run);
       await refresh();
       setSecondsLeft(300);
     });
@@ -413,8 +417,7 @@ function App() {
 
   async function handleRegister(state: RegisterState) {
     await runAction(async () => {
-      const created = await api.createSymbol(payloadFromRegistration(state));
-      await api.createMockActivity(created.id);
+      await api.createSymbol(payloadFromRegistration(state));
       await refresh();
       setView("dashboard");
     });
@@ -442,7 +445,12 @@ function App() {
       />
 
       <main className="app-main">
-        <StatusLine isLoading={isLoading} error={error} />
+        <StatusLine
+          isLoading={isLoading}
+          isBusy={isBusy}
+          error={error}
+          lastRun={lastRun}
+        />
         {isEmpty ? (
           <EmptyState onAddStock={() => setModalOpen(true)} />
         ) : view === "dashboard" ? (
@@ -543,16 +551,28 @@ function AppBar({
 
 function StatusLine({
   isLoading,
+  isBusy,
   error,
+  lastRun,
 }: {
   isLoading: boolean;
+  isBusy: boolean;
   error: string | null;
+  lastRun: CollectionRun | null;
 }) {
-  if (!isLoading && !error) return null;
+  if (!isLoading && !isBusy && !error && !lastRun) return null;
   return (
     <div className="status-line" role="status">
-      {isLoading && <span>불러오는 중</span>}
+      {isLoading && <span>불러오는 중…</span>}
+      {isBusy && <span>수집 중…</span>}
       {error && <span className="error">{error}</span>}
+      {!isBusy && !error && lastRun && (
+        <span className={lastRun.status === "failed" ? "error" : "ok"}>
+          {lastRun.status === "failed"
+            ? `수집 실패 · ${lastRun.message ?? "원인을 확인할 수 없습니다."}`
+            : `수집 완료 · 공시 ${lastRun.disclosures_inserted} · 뉴스 ${lastRun.news_inserted}`}
+        </span>
+      )}
     </div>
   );
 }

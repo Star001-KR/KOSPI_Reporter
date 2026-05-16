@@ -327,6 +327,18 @@ a {
   color: var(--neg);
 }
 
+.status-line span {
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-soft);
+  background: var(--surface);
+  box-shadow: var(--shadow-2);
+  padding: 7px 10px;
+}
+
+.status-line .ok {
+  color: var(--pos);
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
