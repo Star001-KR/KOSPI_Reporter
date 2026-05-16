@@ -1294,9 +1294,6 @@ function CollectionPane({
             <span className="recent-title">· {recent.title}</span>
           </button>
           <div className="recent-arrival-nav">
-            <span className="recent-arrival-count">
-              {recentSafeIndex + 1} / {recentItems.length}
-            </span>
             <button
               type="button"
               className="recent-nav-btn"

@@ -1021,12 +1021,6 @@ a {
   gap: var(--sp-1);
 }
 
-.recent-arrival-count {
-  color: var(--ink-muted);
-  font-family: var(--font-mono);
-  font-size: var(--fs-11);
-}
-
 .recent-nav-btn {
   display: inline-flex;
   align-items: center;
