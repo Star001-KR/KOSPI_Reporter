@@ -567,6 +567,20 @@ a {
   cursor: default;
 }
 
+.chip--mkt--kospi,
+.chip--mkt--kospi:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.chip--mkt--kosdaq,
+.chip--mkt--kosdaq:hover {
+  border-color: var(--gold);
+  background: var(--gold-soft);
+  color: var(--ink);
+}
+
 .type-badge {
   display: inline-flex;
   align-items: center;

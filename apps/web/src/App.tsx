@@ -2374,7 +2374,8 @@ function Chip({
 }
 
 function MktChip({ market }: { market: string }) {
-  return <span className="chip chip--mkt">{market}</span>;
+  const variant = market.toUpperCase() === "KOSDAQ" ? "kosdaq" : "kospi";
+  return <span className={`chip chip--mkt chip--mkt--${variant}`}>{market}</span>;
 }
 
 /**
