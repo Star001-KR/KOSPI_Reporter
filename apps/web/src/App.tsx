@@ -343,7 +343,6 @@ function App() {
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [isLoading, setIsLoading] = useState(true);
   const [isBusy, setIsBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(272);
 
@@ -392,13 +391,11 @@ function App() {
     }
   }, [issues, selectedIssueId]);
 
-  async function runAction(action: () => Promise<void>, success: string) {
+  async function runAction(action: () => Promise<void>) {
     setIsBusy(true);
     setError(null);
-    setNotice(null);
     try {
       await action();
-      setNotice(success);
     } catch (err) {
       setError(err instanceof Error ? err.message : "작업에 실패했습니다.");
     } finally {
@@ -411,7 +408,7 @@ function App() {
       await Promise.all(symbols.map((symbol) => api.createMockActivity(symbol.id)));
       await refresh();
       setSecondsLeft(300);
-    }, "수집 자료를 갱신했습니다.");
+    });
   }
 
   async function handleRegister(state: RegisterState) {
@@ -420,7 +417,7 @@ function App() {
       await api.createMockActivity(created.id);
       await refresh();
       setView("dashboard");
-    }, "종목을 등록했습니다.");
+    });
   }
 
   function goToFeed(stockCode?: string) {
@@ -445,7 +442,7 @@ function App() {
       />
 
       <main className="app-main">
-        <StatusLine isLoading={isLoading} notice={notice} error={error} />
+        <StatusLine isLoading={isLoading} error={error} />
         {isEmpty ? (
           <EmptyState onAddStock={() => setModalOpen(true)} />
         ) : view === "dashboard" ? (
@@ -546,18 +543,15 @@ function AppBar({
 
 function StatusLine({
   isLoading,
-  notice,
   error,
 }: {
   isLoading: boolean;
-  notice: string | null;
   error: string | null;
 }) {
-  if (!isLoading && !notice && !error) return null;
+  if (!isLoading && !error) return null;
   return (
-    <div className="status-line">
+    <div className="status-line" role="status">
       {isLoading && <span>불러오는 중</span>}
-      {notice && <span className="notice">{notice}</span>}
       {error && <span className="error">{error}</span>}
     </div>
   );

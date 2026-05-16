@@ -37,7 +37,10 @@ class SymbolBase(BaseModel):
     @field_validator("market", mode="before")
     @classmethod
     def normalize_market(cls, value: str) -> str:
-        return normalize_symbol_market(str(value)) or "KOSPI"
+        normalized = normalize_symbol_market(str(value))
+        if normalized is None:
+            raise ValueError("market must be KOSPI or KOSDAQ")
+        return normalized
 
     @field_validator("code", mode="before")
     @classmethod
@@ -68,7 +71,10 @@ class SymbolCreate(BaseModel):
     @field_validator("market", mode="before")
     @classmethod
     def normalize_market(cls, value: str) -> str:
-        return normalize_symbol_market(str(value)) or "KOSPI"
+        normalized = normalize_symbol_market(str(value))
+        if normalized is None:
+            raise ValueError("market must be KOSPI or KOSDAQ")
+        return normalized
 
     @field_validator("code", mode="before")
     @classmethod
@@ -98,7 +104,10 @@ class SymbolPatch(BaseModel):
     def normalize_optional_market(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        return normalize_symbol_market(value)
+        normalized = normalize_symbol_market(value)
+        if normalized is None:
+            raise ValueError("market must be KOSPI or KOSDAQ")
+        return normalized
 
     @field_validator("code", mode="before")
     @classmethod

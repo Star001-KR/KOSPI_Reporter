@@ -10,6 +10,8 @@ class ListedSymbol:
     name: str
 
 
+SUPPORTED_MARKETS = frozenset({"KOSPI", "KOSDAQ"})
+
 KR_LISTED_SYMBOLS: tuple[ListedSymbol, ...] = (
     ListedSymbol("KOSPI", "005930", "삼성전자"),
     ListedSymbol("KOSPI", "000660", "SK하이닉스"),
@@ -81,7 +83,9 @@ def normalize_market(value: str | None) -> str | None:
     if value is None:
         return None
     normalized = value.strip().upper()
-    return "KOSPI" if normalized == "KR" else normalized
+    if normalized == "KR":
+        normalized = "KOSPI"
+    return normalized if normalized in SUPPORTED_MARKETS else None
 
 
 def normalize_text(value: str | None) -> str | None:
@@ -111,6 +115,8 @@ def lookup_symbols(
         return []
 
     normalized_market = normalize_market(market)
+    if market is not None and normalized_market is None:
+        return []
     query_code = normalized_query.upper()
     query_name = compact(normalized_query)
 
@@ -150,10 +156,13 @@ def resolve_single_symbol(
 ) -> tuple[ListedSymbol | None, list[ListedSymbol]]:
     normalized_code = normalize_code(code)
     normalized_name = normalize_text(name)
+    normalized_market = normalize_market(market)
+    if normalized_market is None:
+        return None, []
     if normalized_code and normalized_name:
         return (
             ListedSymbol(
-                market=normalize_market(market) or "KOSPI",
+                market=normalized_market,
                 code=normalized_code,
                 name=normalized_name,
             ),
