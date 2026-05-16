@@ -35,6 +35,7 @@ npm run api:test
 npm run worker
 npm run web:dev
 npm run web:build
+npm run verify
 ```
 
 API 코드와 테스트는 추가 설치 없이 동작하도록 Python 표준 라이브러리만 사용한다. 외부 HTTP 호출은 `urllib`, 테스트는 `unittest` 기반이다. 새 런타임 의존성이 꼭 필요하면 `apps/api/requirements.txt`에 추가한다.
@@ -414,7 +415,7 @@ Verification:
 
 ### MVP-08 Tests And Hardening
 
-Status: not-started
+Status: done
 
 Depends on: MVP-01 through MVP-07
 

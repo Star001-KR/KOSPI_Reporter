@@ -11,6 +11,7 @@
     "worker": "PYTHONPATH=.python-deps:apps/api:packages/core ${PYTHON:-.venv/bin/python} workers/scheduler.py",
     "web:dev": "npm --workspace apps/web run dev -- --host 127.0.0.1",
     "web:build": "npm --workspace apps/web run build",
-    "web:preview": "npm --workspace apps/web run preview -- --host 127.0.0.1"
+    "web:preview": "npm --workspace apps/web run preview -- --host 127.0.0.1",
+    "verify": "npm run api:test && npm run web:build"
   }
 }
