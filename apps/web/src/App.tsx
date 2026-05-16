@@ -62,8 +62,8 @@ type ResearchStock = {
   profitLoss: number;
   profitLossPct: number;
   unreadCount: number;
-  newsCount: number;
-  disclosureCount: number;
+  unreadNewsCount: number;
+  unreadDisclosureCount: number;
   latestCollectedAt: string | null;
   dominantSent: SentKey;
   spark: DailyPrice[];
@@ -684,9 +684,10 @@ function buildStocks(
       }
     }
     const stockIssues = issues.filter((issue) => issue.stockId === id);
-    const unreadCount = stockIssues.filter(
-      (issue) => !readIds.has(issue.id),
-    ).length;
+    const unreadIssues = stockIssues.filter((issue) => !readIds.has(issue.id));
+    const unreadCount = unreadIssues.length;
+    const unreadNewsCount = unreadIssues.filter((issue) => issue.type === "news").length;
+    const unreadDisclosureCount = unreadIssues.filter((issue) => issue.type === "disc").length;
     const sentimentCounts = stockIssues.reduce(
       (acc, issue) => ({ ...acc, [issue.sentiment]: acc[issue.sentiment] + 1 }),
       { pos: 0, neg: 0, neu: 0 } satisfies Record<SentKey, number>,
@@ -697,8 +698,6 @@ function buildStocks(
         : sentimentCounts.neg > sentimentCounts.pos && sentimentCounts.neg >= sentimentCounts.neu
           ? "neg"
           : "neu";
-    const newsCount = detail?.news_items.length ?? 0;
-    const disclosureCount = detail?.disclosures.length ?? 0;
     return {
       id,
       code: entry.code,
@@ -712,8 +711,8 @@ function buildStocks(
       profitLoss,
       profitLossPct,
       unreadCount,
-      newsCount,
-      disclosureCount,
+      unreadNewsCount,
+      unreadDisclosureCount,
       latestCollectedAt: latestCollectedFromDetail(detail),
       dominantSent,
       spark,
@@ -1811,7 +1810,7 @@ function Planet({
       onFocus={() => onHover(stock.code)}
       onBlur={() => onHover(null)}
       onClick={() => onClick(stock)}
-      aria-label={`${stock.name}: 뉴스 ${stock.newsCount}, 공시 ${stock.disclosureCount}`}
+      aria-label={`${stock.name}: 미확인 뉴스 ${stock.unreadNewsCount}, 공시 ${stock.unreadDisclosureCount}`}
     >
       <span
         className="planet-disc"
@@ -1825,10 +1824,10 @@ function Planet({
       {hovered && (
         <span className="planet-tooltip" role="tooltip">
           <span>
-            <span className="ttkey">뉴스</span> <b>{stock.newsCount}</b>
+            <span className="ttkey">뉴스</span> <b>{stock.unreadNewsCount}</b>
           </span>
           <span>
-            <span className="ttkey">공시</span> <b>{stock.disclosureCount}</b>
+            <span className="ttkey">공시</span> <b>{stock.unreadDisclosureCount}</b>
           </span>
         </span>
       )}
