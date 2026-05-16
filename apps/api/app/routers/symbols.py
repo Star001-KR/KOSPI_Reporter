@@ -12,6 +12,7 @@ from app.schemas import (
     AnalysisResultRead,
     AnalyzedDisclosure,
     AnalyzedNewsItem,
+    DailyPriceRead,
     DisclosureRead,
     HoldingInput,
     MockActivityResult,
@@ -23,6 +24,7 @@ from app.schemas import (
     SymbolRead,
 )
 from app.services.mock_data import ensure_mock_activity
+from app.services.prices import get_symbol_prices
 from app.services.symbol_catalog import ListedSymbol, lookup_symbols, resolve_single_symbol
 
 router = APIRouter(prefix="/api/symbols", tags=["symbols"])
@@ -210,6 +212,22 @@ def create_symbol(payload: SymbolCreate, db: Session = Depends(get_db)) -> Symbo
 @router.get("/{symbol_id}", response_model=SymbolDetail)
 def get_symbol(symbol_id: int, db: Session = Depends(get_db)) -> SymbolDetail:
     return _symbol_detail(db, _get_symbol_or_404(db, symbol_id))
+
+
+@router.get("/{symbol_id}/prices", response_model=list[DailyPriceRead])
+def get_symbol_price_history(
+    symbol_id: int, db: Session = Depends(get_db)
+) -> list[DailyPriceRead]:
+    """Recent daily closes for a symbol's dashboard sparkline.
+
+    Prices are cached in the database and refreshed from the data source on a
+    short TTL; a fetch failure still serves whatever is already cached.
+    """
+    symbol = _get_symbol_or_404(db, symbol_id)
+    return [
+        DailyPriceRead.model_validate(price)
+        for price in get_symbol_prices(db, symbol)
+    ]
 
 
 @router.patch("/{symbol_id}", response_model=SymbolRead)

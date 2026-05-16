@@ -135,3 +135,9 @@ export interface WatchlistEntry {
   averageCost: number | null;
   memo: string | null;
 }
+
+/** A single trading day's close price for a symbol. */
+export interface DailyPrice {
+  trade_date: string;
+  close: number;
+}

@@ -32,6 +32,7 @@ import {
 } from "./storage";
 import type {
   AnalysisResult,
+  DailyPrice,
   Sentiment,
   SymbolDetail,
   SymbolLookupResult,
@@ -61,7 +62,7 @@ type ResearchStock = {
   reportCount: number;
   latestCollectedAt: string | null;
   dominantSent: SentKey;
-  spark: number[];
+  spark: DailyPrice[];
 };
 
 type ResearchIssue = {
@@ -272,17 +273,6 @@ function typeLabel(type: IssueType): string {
   if (type === "news") return "NEWS";
   if (type === "disc") return "공시";
   return "리포트";
-}
-
-function pseudoSparkline(code: string, baseValue: number, profitLoss: number): number[] {
-  const base = baseValue > 0 ? baseValue : 100;
-  const seed = code.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0);
-  const drift = profitLoss >= 0 ? 0.004 : -0.004;
-  return Array.from({ length: 12 }, (_, index) => {
-    const wave = Math.sin((seed + index * 7) * 0.37) * 0.018;
-    const small = Math.cos((seed + index * 11) * 0.19) * 0.009;
-    return Math.max(base * (1 + wave + small + drift * index), 1);
-  });
 }
 
 function analysisKeywords(analysis: AnalysisResult | null): string[] {
@@ -639,6 +629,7 @@ function buildStocks(
   watchlist: WatchlistEntry[],
   details: SymbolDetail[],
   issues: ResearchIssue[],
+  pricesBySymbol: Record<number, DailyPrice[]>,
 ): ResearchStock[] {
   const detailByKey = new Map(
     details.map((detail) => [`${detail.market}:${detail.code}`, detail]),
@@ -682,7 +673,7 @@ function buildStocks(
       reportCount: 0,
       latestCollectedAt: latestCollectedFromDetail(detail),
       dominantSent,
-      spark: pseudoSparkline(entry.code, price, 0),
+      spark: detail ? pricesBySymbol[detail.id] ?? [] : [],
     };
   });
 }
@@ -702,6 +693,7 @@ function App() {
   const [view, setView] = useState<ViewName>("dashboard");
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
   const [details, setDetails] = useState<SymbolDetail[]>([]);
+  const [pricesBySymbol, setPricesBySymbol] = useState<Record<number, DailyPrice[]>>({});
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
   const [filter, setFilter] = useState<FeedFilter>({});
   const [modalOpen, setModalOpen] = useState(false);
@@ -762,8 +754,8 @@ function App() {
   }, [watchlist, details]);
   const issues = useMemo(() => buildIssues(watchedDetails), [watchedDetails]);
   const stocks = useMemo(
-    () => buildStocks(watchlist, watchedDetails, issues),
-    [watchlist, watchedDetails, issues],
+    () => buildStocks(watchlist, watchedDetails, issues, pricesBySymbol),
+    [watchlist, watchedDetails, issues, pricesBySymbol],
   );
   const registeredCodes = useMemo(
     () => watchlist.map((entry) => entry.code),
@@ -792,6 +784,29 @@ function App() {
       )
       .finally(() => setIsLoading(false));
   }, [refresh, pushNotification]);
+
+  // Load real daily closes for each symbol once details arrive; a per-symbol
+  // failure just yields an empty series so the rest of the dashboard is fine.
+  useEffect(() => {
+    if (details.length === 0) return;
+    let cancelled = false;
+    Promise.all(
+      details.map((detail) =>
+        api
+          .getSymbolPrices(detail.id)
+          .then((rows) => [detail.id, rows] as const)
+          .catch(() => [detail.id, [] as DailyPrice[]] as const),
+      ),
+    ).then((entries) => {
+      if (cancelled) return;
+      const next: Record<number, DailyPrice[]> = {};
+      for (const [id, rows] of entries) next[id] = rows;
+      setPricesBySymbol(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [details]);
 
   useEffect(() => {
     if (!issues.length && selectedIssueId) {
@@ -1431,7 +1446,7 @@ function StockCard({
           {up ? "▲" : "▼"} {Math.abs(stock.changePct).toFixed(1)}%
         </span>
       </div>
-      <Sparkline data={stock.spark} positive={up} />
+      <Sparkline data={stock.spark} />
       <div className="foot">
         <span className="pos-info">
           {stock.quantity ?? "-"}주 · 평단 {stock.averageCost ? stock.averageCost.toLocaleString() : "-"}
@@ -2398,26 +2413,75 @@ function SentPill({ sentiment }: { sentiment: SentKey }) {
   );
 }
 
-function Sparkline({ data, positive }: { data: number[]; positive: boolean }) {
+function formatTradeDate(value: string): string {
+  const parts = value.split("-");
+  if (parts.length !== 3) return value;
+  return `${Number(parts[1])}월 ${Number(parts[2])}일`;
+}
+
+/**
+ * Daily-close sparkline. Hovering reads out the close price and trading day
+ * at the nearest point; the line color reflects the period's net direction.
+ */
+function Sparkline({ data }: { data: DailyPrice[] }) {
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const width = 260;
-  const height = 36;
-  const min = Math.min(...data);
-  const max = Math.max(...data);
+  const height = 40;
+
+  if (data.length < 2) {
+    return <span className="spark spark--empty">일별 시세 준비 중</span>;
+  }
+
+  const closes = data.map((point) => point.close);
+  const min = Math.min(...closes);
+  const max = Math.max(...closes);
   const range = max - min || 1;
+  const positive = closes[closes.length - 1] >= closes[0];
+  const xOf = (index: number) => (index / (data.length - 1)) * width;
+  const yOf = (value: number) => height - 4 - ((value - min) / range) * (height - 8);
   const points = data
-    .map((value, index) => {
-      const x = (index / (data.length - 1)) * width;
-      const y = height - ((value - min) / range) * (height - 6) - 3;
-      return `${x},${y}`;
-    })
+    .map((point, index) => `${xOf(index)},${yOf(point.close)}`)
     .join(" ");
   const fillPoints = `0,${height} ${points} ${width},${height}`;
+
+  function handleMove(event: React.MouseEvent<HTMLSpanElement>) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width === 0) return;
+    const ratio = (event.clientX - rect.left) / rect.width;
+    const index = Math.round(ratio * (data.length - 1));
+    setHoverIndex(Math.min(data.length - 1, Math.max(0, index)));
+  }
+
+  const active = hoverIndex === null ? null : data[hoverIndex];
+  const activeLeft = hoverIndex === null ? 0 : (hoverIndex / (data.length - 1)) * 100;
+  const activeTop = active ? (yOf(active.close) / height) * 100 : 0;
+
   return (
-    <span className={`spark ${positive ? "spark--pos" : "spark--neg"}`}>
+    <span
+      className={`spark ${positive ? "spark--pos" : "spark--neg"}`}
+      onMouseMove={handleMove}
+      onMouseLeave={() => setHoverIndex(null)}
+    >
       <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true">
         <polygon points={fillPoints} />
         <polyline points={points} />
       </svg>
+      {active && (
+        <>
+          <span className="spark-cursor" style={{ left: `${activeLeft}%` }} />
+          <span
+            className="spark-dot"
+            style={{ left: `${activeLeft}%`, top: `${activeTop}%` }}
+          />
+          <span
+            className="spark-tip"
+            style={{ left: `${Math.min(85, Math.max(15, activeLeft))}%` }}
+          >
+            <b>{formatMoney(active.close)}</b>
+            <span>{formatTradeDate(active.trade_date)}</span>
+          </span>
+        </>
+      )}
     </span>
   );
 }

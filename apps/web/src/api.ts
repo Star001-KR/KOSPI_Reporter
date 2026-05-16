@@ -1,5 +1,6 @@
 import type {
   CollectionRun,
+  DailyPrice,
   PortfolioBrief,
   SymbolDetail,
   SymbolLookupResult,
@@ -56,6 +57,8 @@ export const api = {
       `/api/symbols/lookup?q=${encodeURIComponent(q)}&market=${encodeURIComponent(market)}`,
     ),
   getSymbol: (id: number) => request<SymbolDetail>(`/api/symbols/${id}`),
+  getSymbolPrices: (id: number) =>
+    request<DailyPrice[]>(`/api/symbols/${id}/prices`),
   createSymbol: (payload: SymbolPayload) =>
     request<SymbolRecord>("/api/symbols", {
       method: "POST",

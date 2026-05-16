@@ -258,3 +258,10 @@ class CollectionRunRequest(BaseModel):
     include_disclosures: bool = True
     include_news: bool = True
     analyze: bool = True
+
+
+class DailyPriceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    trade_date: str
+    close: float

@@ -54,6 +54,10 @@ class Symbol(Base):
         back_populates="symbol",
         cascade="all, delete-orphan",
     )
+    daily_prices: Mapped[list[DailyPrice]] = relationship(
+        back_populates="symbol",
+        cascade="all, delete-orphan",
+    )
 
 
 class Holding(Base):
@@ -181,3 +185,24 @@ class CollectionRun(Base):
     news_inserted: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     disclosures_inserted: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     message: Mapped[str | None] = mapped_column(Text)
+
+
+class DailyPrice(Base):
+    __tablename__ = "daily_prices"
+    __table_args__ = (
+        UniqueConstraint("symbol_id", "trade_date", name="uq_daily_prices_symbol_date"),
+        Index("ix_daily_prices_symbol_date", "symbol_id", "trade_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol_id: Mapped[int] = mapped_column(
+        ForeignKey("symbols.id", ondelete="CASCADE"), nullable=False
+    )
+    # Trading day as an ISO ``YYYY-MM-DD`` string; sorts chronologically.
+    trade_date: Mapped[str] = mapped_column(String(10), nullable=False)
+    close: Mapped[float] = mapped_column(Numeric(20, 4), nullable=False)
+    collected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+    symbol: Mapped[Symbol] = relationship(back_populates="daily_prices")

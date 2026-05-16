@@ -1215,10 +1215,24 @@ a {
   font-family: var(--font-mono);
 }
 
+.spark {
+  position: relative;
+  display: block;
+  height: 40px;
+}
+
 .spark svg {
   display: block;
   width: 100%;
-  height: 36px;
+  height: 40px;
+}
+
+.spark--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-muted);
+  font-size: var(--fs-11);
 }
 
 .spark polygon {
@@ -1240,6 +1254,52 @@ a {
 
 .spark--neg {
   color: var(--neg);
+}
+
+.spark-cursor {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--line-strong);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.spark-dot {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 2px var(--surface);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.spark-tip {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  border-radius: var(--r-sm);
+  background: var(--ink);
+  color: var(--bg);
+  padding: 3px 7px;
+  font-size: var(--fs-10);
+  line-height: 1.3;
+  white-space: nowrap;
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 6;
+}
+
+.spark-tip b {
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  font-weight: 700;
 }
 
 .feed-view {
