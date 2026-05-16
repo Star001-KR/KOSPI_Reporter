@@ -27,6 +27,7 @@ import { api } from "./api";
 import {
   loadReadIds,
   loadWatchlist,
+  removeWatchlistEntry,
   saveReadIds,
   saveWatchlist,
   upsertWatchlistEntry,
@@ -977,6 +978,22 @@ function App() {
     saveWatchlist(next);
   }
 
+  // Drop a card from the dashboard. The watchlist lives only in this browser,
+  // so removal just prunes localStorage; the shared public symbol is untouched.
+  function removeFromWatchlist(stock: ResearchStock) {
+    const next = removeWatchlistEntry(watchlist, {
+      market: stock.market,
+      code: stock.code,
+    });
+    setWatchlist(next);
+    saveWatchlist(next);
+    pushNotification({
+      tone: "info",
+      title: "종목 제거",
+      message: `${stock.name} 카드를 대시보드에서 제거했습니다.`,
+    });
+  }
+
   const watchlistEmpty = !isLoading && watchlist.length === 0;
 
   return (
@@ -1010,6 +1027,7 @@ function App() {
               refreshing={isBusy}
               onRefresh={handleRefreshCollection}
               onReorder={reorderWatchlist}
+              onRemove={removeFromWatchlist}
               onPlanetClick={(stock) => goToFeed(stock.code)}
             />
           )
@@ -1209,6 +1227,7 @@ function Dashboard({
   refreshing,
   onRefresh,
   onReorder,
+  onRemove,
   onPlanetClick,
 }: {
   stocks: ResearchStock[];
@@ -1217,6 +1236,7 @@ function Dashboard({
   refreshing: boolean;
   onRefresh: () => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
+  onRemove: (stock: ResearchStock) => void;
   onPlanetClick: (stock: ResearchStock) => void;
 }) {
   return (
@@ -1229,7 +1249,12 @@ function Dashboard({
         onRefresh={onRefresh}
         onPlanetClick={onPlanetClick}
       />
-      <HoldingsPane stocks={stocks} onOpen={onPlanetClick} onReorder={onReorder} />
+      <HoldingsPane
+        stocks={stocks}
+        onOpen={onPlanetClick}
+        onReorder={onReorder}
+        onRemove={onRemove}
+      />
     </div>
   );
 }
@@ -1353,10 +1378,12 @@ function HoldingsPane({
   stocks,
   onOpen,
   onReorder,
+  onRemove,
 }: {
   stocks: ResearchStock[];
   onOpen: (stock: ResearchStock) => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
+  onRemove: (stock: ResearchStock) => void;
 }) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
@@ -1408,6 +1435,7 @@ function HoldingsPane({
               overIndex === index && dragIndex !== null && dragIndex !== index
             }
             onOpen={() => onOpen(stock)}
+            onRemove={() => onRemove(stock)}
             onDragStart={() => setDragIndex(index)}
             onDragEnterCard={() => setOverIndex(index)}
             onDropCard={() => {
@@ -1428,6 +1456,7 @@ function StockCard({
   dragging,
   dropTarget,
   onOpen,
+  onRemove,
   onDragStart,
   onDragEnterCard,
   onDropCard,
@@ -1438,12 +1467,14 @@ function StockCard({
   dragging: boolean;
   dropTarget: boolean;
   onOpen: () => void;
+  onRemove: () => void;
   onDragStart: () => void;
   onDragEnterCard: () => void;
   onDropCard: () => void;
   onDragEnd: () => void;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
+  const [confirming, setConfirming] = useState(false);
   const up = stock.changePct >= 0;
   const hasChange = stock.spark.length > 1;
   const hasValuation =
@@ -1457,6 +1488,7 @@ function StockCard({
       data-dragging={dragging ? "true" : undefined}
       data-drop-target={dropTarget ? "true" : undefined}
       onClick={onOpen}
+      onMouseLeave={() => setConfirming(false)}
       onKeyDown={(event) => {
         if (event.target !== event.currentTarget) return;
         if (event.key === "Enter" || event.key === " ") {
@@ -1511,6 +1543,19 @@ function StockCard({
         >
           <FileText size={14} />
         </a>
+        <button
+          type="button"
+          className={`card-remove${confirming ? " card-remove--armed" : ""}`}
+          aria-label={confirming ? `${stock.name} 제거 확인` : `${stock.name} 카드 제거`}
+          title={confirming ? "한 번 더 누르면 제거돼요" : "카드 제거"}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (confirming) onRemove();
+            else setConfirming(true);
+          }}
+        >
+          {confirming ? "삭제" : <X size={13} />}
+        </button>
       </div>
       <div className="row stock-price-row">
         <span className="price">{formatMoney(stock.price)}</span>
