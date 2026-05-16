@@ -71,3 +71,29 @@ export function removeWatchlistEntry(
   const key = watchlistKey(target);
   return list.filter((item) => watchlistKey(item) !== key);
 }
+
+const READ_ITEMS_KEY = "kospi.read-items.v1";
+
+/** Read the set of feed issue ids the visitor has already opened. */
+export function loadReadIds(): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(READ_ITEMS_KEY);
+    if (!raw) return new Set();
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(
+      parsed.filter((value): value is string => typeof value === "string"),
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+/** Persist the set of opened feed issue ids. */
+export function saveReadIds(ids: Set<string>): void {
+  try {
+    window.localStorage.setItem(READ_ITEMS_KEY, JSON.stringify([...ids]));
+  } catch {
+    // localStorage unavailable (private mode / quota) — keep state in memory.
+  }
+}

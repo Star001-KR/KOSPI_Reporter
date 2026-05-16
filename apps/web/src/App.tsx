@@ -25,7 +25,9 @@ import type { ReactNode } from "react";
 
 import { api } from "./api";
 import {
+  loadReadIds,
   loadWatchlist,
+  saveReadIds,
   saveWatchlist,
   upsertWatchlistEntry,
   watchlistKey,
@@ -57,6 +59,7 @@ type ResearchStock = {
   profitLoss: number;
   profitLossPct: number;
   issueCount: number;
+  unreadCount: number;
   newsCount: number;
   disclosureCount: number;
   reportCount: number;
@@ -630,6 +633,7 @@ function buildStocks(
   details: SymbolDetail[],
   issues: ResearchIssue[],
   pricesBySymbol: Record<number, DailyPrice[]>,
+  readIds: Set<string>,
 ): ResearchStock[] {
   const detailByKey = new Map(
     details.map((detail) => [`${detail.market}:${detail.code}`, detail]),
@@ -665,6 +669,9 @@ function buildStocks(
       }
     }
     const stockIssues = issues.filter((issue) => issue.stockId === id);
+    const unreadCount = stockIssues.filter(
+      (issue) => !readIds.has(issue.id),
+    ).length;
     const sentimentCounts = stockIssues.reduce(
       (acc, issue) => ({ ...acc, [issue.sentiment]: acc[issue.sentiment] + 1 }),
       { pos: 0, neg: 0, neu: 0 } satisfies Record<SentKey, number>,
@@ -690,6 +697,7 @@ function buildStocks(
       profitLoss,
       profitLossPct,
       issueCount: newsCount + disclosureCount,
+      unreadCount,
       newsCount,
       disclosureCount,
       reportCount: 0,
@@ -725,6 +733,17 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [isBusy, setIsBusy] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(AUTO_REFRESH_SECONDS);
+  const [readIds, setReadIds] = useState<Set<string>>(() => loadReadIds());
+
+  const markRead = useCallback((id: string) => {
+    setReadIds((prev) => {
+      if (prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.add(id);
+      saveReadIds(next);
+      return next;
+    });
+  }, []);
 
   const pushNotification = useCallback((input: NotificationInput) => {
     const createdAt = new Date().toISOString();
@@ -776,8 +795,8 @@ function App() {
   }, [watchlist, details]);
   const issues = useMemo(() => buildIssues(watchedDetails), [watchedDetails]);
   const stocks = useMemo(
-    () => buildStocks(watchlist, watchedDetails, issues, pricesBySymbol),
-    [watchlist, watchedDetails, issues, pricesBySymbol],
+    () => buildStocks(watchlist, watchedDetails, issues, pricesBySymbol, readIds),
+    [watchlist, watchedDetails, issues, pricesBySymbol, readIds],
   );
   const registeredCodes = useMemo(
     () => watchlist.map((entry) => entry.code),
@@ -993,6 +1012,8 @@ function App() {
             setFilter={setFilter}
             selectedIssueId={selectedIssueId}
             setSelectedIssueId={setSelectedIssueId}
+            readIds={readIds}
+            markRead={markRead}
           />
         )}
       </main>
@@ -1567,6 +1588,7 @@ function Planet({
 }) {
   const size = stock.issueCount > 0 ? Math.min(82, 28 + stock.issueCount * 10.5) : 28;
   const hasNews = stock.issueCount > 0;
+  const hasUnread = stock.unreadCount > 0;
   const fontSize = Math.max(11, Math.min(22, size * 0.42));
   return (
     <button
@@ -1586,7 +1608,7 @@ function Planet({
         style={{ width: size, height: size, fontSize }}
       >
         {hasNews ? stock.issueCount : ""}
-        {hasNews && <span className="planet-blip" />}
+        {hasUnread && <span className="planet-blip" />}
       </span>
       <span className="planet-label">{stock.name}</span>
       {hovered && (
@@ -1613,6 +1635,8 @@ function Feed({
   setFilter,
   selectedIssueId,
   setSelectedIssueId,
+  readIds,
+  markRead,
 }: {
   stocks: ResearchStock[];
   issues: ResearchIssue[];
@@ -1620,6 +1644,8 @@ function Feed({
   setFilter: (filter: FeedFilter) => void;
   selectedIssueId: string | null;
   setSelectedIssueId: (id: string | null) => void;
+  readIds: Set<string>;
+  markRead: (id: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const emptyMessage =
@@ -1650,6 +1676,11 @@ function Feed({
     }
   }, [selected, selectedIssueId, setSelectedIssueId]);
 
+  // Viewing an issue's detail marks it read (clears the unread indicator).
+  useEffect(() => {
+    if (selected) markRead(selected.id);
+  }, [selected, markRead]);
+
   return (
     <div className="col feed-view">
       <FeedFilters
@@ -1676,6 +1707,7 @@ function Feed({
               key={issue.id}
               issue={issue}
               selected={selected?.id === issue.id}
+              unread={!readIds.has(issue.id)}
               onClick={() => setSelectedIssueId(issue.id)}
             />
           ))}
@@ -1797,10 +1829,12 @@ function FeedFilters({
 function FeedListItem({
   issue,
   selected,
+  unread,
   onClick,
 }: {
   issue: ResearchIssue;
   selected: boolean;
+  unread: boolean;
   onClick: () => void;
 }) {
   const sourceLabel = clusteredSourceLabel(issue);
@@ -1810,6 +1844,11 @@ function FeedListItem({
       <span className={`s-rail s-rail--${issue.sentiment}`} />
       <span className="body">
         <span className="meta">
+          <span
+            className="feed-unread-dot"
+            data-unread={unread ? "true" : "false"}
+            aria-hidden="true"
+          />
           <MktChip market={issue.market} />
           <span className="feed-stock-name">{issue.stockName}</span>
           <span>·</span>

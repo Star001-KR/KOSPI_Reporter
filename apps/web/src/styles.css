@@ -1490,6 +1490,18 @@ a {
   font-family: var(--font-mono);
 }
 
+.feed-unread-dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.feed-unread-dot[data-unread="true"] {
+  background: var(--neg);
+}
+
 .feed-item .title {
   margin-top: 2px;
   color: var(--ink);
