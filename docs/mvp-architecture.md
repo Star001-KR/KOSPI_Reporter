@@ -497,7 +497,9 @@ Verification:
 
 ### MVP-11 Deployment, Domain, HTTPS
 
-Status: not-started
+Status: done
+
+배포 아티팩트(`Dockerfile`, `.dockerignore`, `.env.production.example`, `docs/deployment.md`)가 준비됐다. 실제 호스팅 배포·도메인 등록·HTTPS 적용은 `docs/deployment.md`에 따른 수동 단계다.
 
 Depends on: MVP-08, MVP-10
 
