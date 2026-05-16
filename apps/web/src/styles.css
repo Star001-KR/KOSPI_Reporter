@@ -1243,7 +1243,7 @@ a {
   gap: var(--sp-3);
   min-height: 0;
   overflow: auto;
-  padding: 0 var(--sp-6) var(--sp-6);
+  padding: var(--sp-3) var(--sp-6) var(--sp-6);
 }
 
 .stock-card {
@@ -1257,6 +1257,7 @@ a {
   padding: var(--sp-3);
   text-align: left;
   cursor: pointer;
+  position: relative;
   transition:
     border-color var(--dur-fast) var(--ease),
     box-shadow var(--dur-fast) var(--ease),
@@ -1346,22 +1347,26 @@ a {
 }
 
 .card-remove {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 auto;
-  height: 22px;
-  min-width: 22px;
-  padding: 0 6px;
-  border: 1px solid var(--line-soft);
-  border-radius: var(--r-sm);
-  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--surface);
   color: var(--ink-muted);
   font-size: var(--fs-11);
   font-weight: 600;
   line-height: 1;
   cursor: pointer;
   opacity: 0;
+  box-shadow: var(--shadow-1);
+  z-index: 2;
   transition:
     opacity var(--dur-fast) var(--ease),
     border-color var(--dur-fast) var(--ease),
@@ -1369,13 +1374,15 @@ a {
     background var(--dur-fast) var(--ease);
 }
 
-.stock-card:hover .card-remove {
+.stock-card:hover .card-remove,
+.stock-card:focus-within .card-remove {
   opacity: 1;
 }
 
 .card-remove:hover {
   border-color: var(--neg);
   color: var(--neg);
+  background: var(--neg-soft);
 }
 
 .card-remove:focus-visible {
@@ -1387,6 +1394,9 @@ a {
 .card-remove--armed,
 .card-remove--armed:hover {
   opacity: 1;
+  width: auto;
+  padding: 0 8px;
+  border-radius: var(--r-pill);
   border-color: var(--neg);
   background: var(--neg);
   color: #fff;
