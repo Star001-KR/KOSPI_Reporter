@@ -639,9 +639,31 @@ function buildStocks(
     const id = detail?.id ?? -(index + 1);
     const quantity = entry.quantity;
     const averageCost = entry.averageCost;
-    // Holdings are cost-basis only; live prices are out of scope for the MVP.
-    const marketValue = quantity && averageCost ? quantity * averageCost : 0;
-    const price = averageCost ?? 0;
+    const spark = detail ? pricesBySymbol[detail.id] ?? [] : [];
+    // Current price and day-over-day change come from the daily close series.
+    const latestClose = spark.length > 0 ? spark[spark.length - 1].close : null;
+    const prevClose = spark.length > 1 ? spark[spark.length - 2].close : null;
+    const price = latestClose ?? 0;
+    const changePct =
+      latestClose !== null && prevClose !== null && prevClose !== 0
+        ? ((latestClose - prevClose) / prevClose) * 100
+        : 0;
+    // Valuation needs the holding (quantity / average cost) and the live price.
+    let marketValue = 0;
+    let profitLoss = 0;
+    let profitLossPct = 0;
+    if (quantity !== null) {
+      if (latestClose !== null) {
+        marketValue = quantity * latestClose;
+      } else if (averageCost !== null) {
+        marketValue = quantity * averageCost;
+      }
+      if (averageCost !== null && latestClose !== null) {
+        const costBasis = quantity * averageCost;
+        profitLoss = quantity * (latestClose - averageCost);
+        profitLossPct = costBasis !== 0 ? (profitLoss / costBasis) * 100 : 0;
+      }
+    }
     const stockIssues = issues.filter((issue) => issue.stockId === id);
     const sentimentCounts = stockIssues.reduce(
       (acc, issue) => ({ ...acc, [issue.sentiment]: acc[issue.sentiment] + 1 }),
@@ -664,16 +686,16 @@ function buildStocks(
       averageCost,
       marketValue,
       price,
-      changePct: 0,
-      profitLoss: 0,
-      profitLossPct: 0,
+      changePct,
+      profitLoss,
+      profitLossPct,
       issueCount: newsCount + disclosureCount,
       newsCount,
       disclosureCount,
       reportCount: 0,
       latestCollectedAt: latestCollectedFromDetail(detail),
       dominantSent,
-      spark: detail ? pricesBySymbol[detail.id] ?? [] : [],
+      spark,
     };
   });
 }
@@ -1396,6 +1418,9 @@ function StockCard({
 }) {
   const cardRef = useRef<HTMLButtonElement>(null);
   const up = stock.changePct >= 0;
+  const hasChange = stock.spark.length > 1;
+  const hasValuation =
+    stock.quantity !== null && stock.averageCost !== null && stock.spark.length > 0;
   return (
     <button
       ref={cardRef}
@@ -1442,18 +1467,26 @@ function StockCard({
       </div>
       <div className="row stock-price-row">
         <span className="price">{formatMoney(stock.price)}</span>
-        <span className={`chg ${up ? "chg--pos" : "chg--neg"}`}>
-          {up ? "▲" : "▼"} {Math.abs(stock.changePct).toFixed(1)}%
-        </span>
+        {hasChange ? (
+          <span className={`chg ${up ? "chg--pos" : "chg--neg"}`}>
+            {up ? "▲" : "▼"} {Math.abs(stock.changePct).toFixed(2)}%
+          </span>
+        ) : (
+          <span className="chg chg--muted">-</span>
+        )}
       </div>
       <Sparkline data={stock.spark} />
       <div className="foot">
         <span className="pos-info">
           {stock.quantity ?? "-"}주 · 평단 {stock.averageCost ? stock.averageCost.toLocaleString() : "-"}
         </span>
-        <span className={`pl ${stock.profitLoss >= 0 ? "pl--pos" : "pl--neg"}`}>
-          {formatSignedMoney(stock.profitLoss)} ({formatPct(stock.profitLossPct)})
-        </span>
+        {hasValuation ? (
+          <span className={`pl ${stock.profitLoss >= 0 ? "pl--pos" : "pl--neg"}`}>
+            {formatSignedMoney(stock.profitLoss)} ({formatPct(stock.profitLossPct)})
+          </span>
+        ) : (
+          <span className="pl pl--muted">-</span>
+        )}
       </div>
     </button>
   );

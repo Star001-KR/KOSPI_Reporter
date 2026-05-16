@@ -1215,6 +1215,11 @@ a {
   color: var(--neg);
 }
 
+.chg--muted,
+.pl--muted {
+  color: var(--ink-muted);
+}
+
 .stock-card .foot {
   display: flex;
   justify-content: space-between;
