@@ -1877,8 +1877,6 @@ function FeedListItem({
           <MktChip market={issue.market} />
           <span className="feed-stock-name">{issue.stockName}</span>
           <span>·</span>
-          <span className="when">{formatTime(issue.occurredAt)}</span>
-          <span>·</span>
           <span>{sourceLabel}</span>
         </span>
         <span className="title">{issue.title}</span>
@@ -1888,6 +1886,7 @@ function FeedListItem({
           <ImportanceDots value={issue.importance} />
         </span>
       </span>
+      <span className="feed-item-time">{formatTime(issue.occurredAt)}</span>
     </button>
   );
 }

@@ -1487,6 +1487,7 @@ a {
   flex: 1;
   flex-direction: column;
   min-width: 0;
+  padding-right: 64px;
 }
 
 .feed-item .meta {
@@ -1512,6 +1513,17 @@ a {
 
 .feed-item .when {
   font-family: var(--font-mono);
+}
+
+.feed-item-time {
+  position: absolute;
+  right: var(--sp-4);
+  bottom: var(--sp-3);
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-10);
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .feed-unread-dot {
