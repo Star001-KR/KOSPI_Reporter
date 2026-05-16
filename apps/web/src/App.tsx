@@ -6,6 +6,7 @@ import {
   Check,
   ChevronDown,
   ChevronLeft,
+  ChevronRight,
   FileText,
   GripVertical,
   Info,
@@ -189,6 +190,10 @@ const NEWS_STRONG_EVENT_TERMS = new Set(["사과", "노사", "교섭", "귀국",
 
 // Dashboard countdown cadence; mirror the worker's COLLECTION_INTERVAL_SECONDS.
 const AUTO_REFRESH_SECONDS = 600;
+
+// Recent-arrival ticker: how many recent issues to cycle and how long each shows.
+const RECENT_ARRIVAL_LIMIT = 6;
+const RECENT_ARRIVAL_INTERVAL_MS = 5000;
 
 const orbitConfigs = [
   { r: 205, start: 138, period: 118 },
@@ -1155,8 +1160,41 @@ function CollectionPane({
   onRefresh: () => void;
   onPlanetClick: (stock: ResearchStock) => void;
 }) {
-  const recent = issues[0] ?? null;
-  const recentStock = recent ? stocks.find((stock) => stock.code === recent.stockCode) : null;
+  const recentItems = useMemo(
+    () => issues.slice(0, RECENT_ARRIVAL_LIMIT),
+    [issues],
+  );
+  const [recentIndex, setRecentIndex] = useState(0);
+
+  // Snap back to the newest arrival whenever the collected set changes.
+  useEffect(() => {
+    setRecentIndex(0);
+  }, [recentItems]);
+
+  // Rotate through recent arrivals; a manual step restarts the dwell timer.
+  useEffect(() => {
+    if (recentItems.length <= 1) return;
+    const timer = window.setInterval(() => {
+      setRecentIndex((index) => (index + 1) % recentItems.length);
+    }, RECENT_ARRIVAL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [recentItems.length, recentIndex]);
+
+  const recentSafeIndex = recentItems.length
+    ? Math.min(recentIndex, recentItems.length - 1)
+    : 0;
+  const recent = recentItems[recentSafeIndex] ?? null;
+  const recentStock = recent
+    ? stocks.find((stock) => stock.code === recent.stockCode)
+    : null;
+
+  function stepRecent(delta: number) {
+    setRecentIndex((index) => {
+      const len = recentItems.length;
+      if (len <= 0) return 0;
+      return (((index + delta) % len) + len) % len;
+    });
+  }
   const totalNew = stocks.reduce((sum, stock) => sum + stock.issueCount, 0);
   const lastCollected = issues.reduce<string | null>(
     (latest, issue) =>
@@ -1183,13 +1221,43 @@ function CollectionPane({
         <span>수집 항목 {issues.length}건</span>
       </div>
       {recent && recentStock && (
-        <button className="recent-arrival" onClick={() => onPlanetClick(recentStock)}>
-          <span className="meta">최근 도착</span>
-          <span className="when soft">{formatTime(recent.occurredAt)}</span>
-          <SentGlyph sentiment={recent.sentiment} />
-          <span className="recent-stock">{recentStock.name}</span>
-          <span className="recent-title">· {recent.title}</span>
-        </button>
+        <div className="recent-arrival">
+          <button
+            type="button"
+            key={recent.id}
+            className="recent-arrival-main"
+            onClick={() => onPlanetClick(recentStock)}
+          >
+            <span className="meta">최근 도착</span>
+            <span className="when soft">{formatTime(recent.occurredAt)}</span>
+            <SentGlyph sentiment={recent.sentiment} />
+            <span className="recent-stock">{recentStock.name}</span>
+            <span className="recent-title">· {recent.title}</span>
+          </button>
+          <div className="recent-arrival-nav">
+            <span className="recent-arrival-count">
+              {recentSafeIndex + 1} / {recentItems.length}
+            </span>
+            <button
+              type="button"
+              className="recent-nav-btn"
+              onClick={() => stepRecent(-1)}
+              disabled={recentItems.length <= 1}
+              aria-label="이전 소식"
+            >
+              <ChevronLeft size={14} />
+            </button>
+            <button
+              type="button"
+              className="recent-nav-btn"
+              onClick={() => stepRecent(1)}
+              disabled={recentItems.length <= 1}
+              aria-label="다음 소식"
+            >
+              <ChevronRight size={14} />
+            </button>
+          </div>
+        </div>
       )}
     </section>
   );

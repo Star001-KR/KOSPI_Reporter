@@ -959,13 +959,25 @@ a {
   align-items: center;
   gap: var(--sp-2);
   width: 100%;
-  border: 0;
   border-top: 1px solid var(--line-soft);
   background: var(--surface);
   color: var(--ink);
   padding: var(--sp-3) var(--sp-6);
   font-size: var(--fs-12);
+}
+
+.recent-arrival-main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: var(--sp-2);
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  padding: 0;
   text-align: left;
+  animation: recentArrivalIn var(--dur) var(--ease);
 }
 
 .recent-arrival .meta {
@@ -986,6 +998,51 @@ a {
   color: var(--ink-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.recent-arrival-nav {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.recent-arrival-count {
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+}
+
+.recent-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--ink-soft);
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.recent-nav-btn:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+
+@keyframes recentArrivalIn {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .holdings-head {
