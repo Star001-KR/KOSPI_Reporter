@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends
 
 from app.database import get_db
 from app.models import AnalysisResult, Disclosure, NewsItem, Symbol
-from app.routers.symbols import research_symbol_id
+from app.routers.symbols import research_symbol_ids
 from app.schemas import BriefItem, BriefPosition, PortfolioBrief, SymbolRead
 
 router = APIRouter(prefix="/api/portfolio", tags=["portfolio"])
@@ -46,20 +46,26 @@ def get_portfolio_brief(db: Session = Depends(get_db)) -> PortfolioBrief:
     latest_collected_at = None
 
     for symbol in symbols:
-        research_id = research_symbol_id(db, symbol)
+        research_ids = research_symbol_ids(db, symbol)
         news_count = db.execute(
-            select(func.count()).select_from(NewsItem).where(NewsItem.symbol_id == research_id)
+            select(func.count())
+            .select_from(NewsItem)
+            .where(NewsItem.symbol_id.in_(research_ids))
         ).scalar_one()
         disclosure_count = db.execute(
             select(func.count())
             .select_from(Disclosure)
-            .where(Disclosure.symbol_id == research_id)
+            .where(Disclosure.symbol_id.in_(research_ids))
         ).scalar_one()
         latest_news_at = db.execute(
-            select(func.max(NewsItem.collected_at)).where(NewsItem.symbol_id == research_id)
+            select(func.max(NewsItem.collected_at)).where(
+                NewsItem.symbol_id.in_(research_ids)
+            )
         ).scalar_one()
         latest_disclosure_at = db.execute(
-            select(func.max(Disclosure.collected_at)).where(Disclosure.symbol_id == research_id)
+            select(func.max(Disclosure.collected_at)).where(
+                Disclosure.symbol_id.in_(research_ids)
+            )
         ).scalar_one()
         symbol_latest = max(
             [value for value in [latest_news_at, latest_disclosure_at] if value is not None],

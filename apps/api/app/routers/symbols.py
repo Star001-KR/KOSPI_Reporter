@@ -46,23 +46,29 @@ def _get_symbol_or_404(db: Session, symbol_id: int) -> Symbol:
     return symbol
 
 
-def research_symbol_id(db: Session, symbol: Symbol) -> int:
-    """The symbol id whose collected news and disclosures represent ``symbol``.
+def research_symbol_ids(db: Session, symbol: Symbol) -> list[int]:
+    """Every symbol id whose collected news and disclosures represent ``symbol``.
 
-    A preferred stock shares its common stock's research. News and disclosures
-    are stored once (globally unique), owned by whichever symbol collected them
-    first — so when the common stock is also registered, a preferred stock
-    reads the common stock's rows instead of its own empty set.
+    A common stock and its preferred stocks share one research identity
+    (삼성전자 005930 / 삼성전자우 005935). News and disclosures are stored once —
+    globally unique — under whichever sibling happened to collect them first,
+    so a read must union every registered symbol that resolves to the same
+    identity rather than trust a single owner. Returns ``[symbol.id]`` when no
+    other registered symbol shares the identity.
     """
     source_code, _ = collection_identity(symbol.code, symbol.name)
-    if source_code == symbol.code:
-        return symbol.id
-    common_id = db.execute(
-        select(Symbol.id).where(
-            Symbol.market == symbol.market, Symbol.code == source_code
+    siblings = db.execute(
+        select(Symbol.id, Symbol.code, Symbol.name).where(
+            Symbol.market == symbol.market
         )
-    ).scalar_one_or_none()
-    return common_id if common_id is not None else symbol.id
+    ).all()
+    ids = {
+        row_id
+        for row_id, code, name in siblings
+        if collection_identity(code, name)[0] == source_code
+    }
+    ids.add(symbol.id)
+    return sorted(ids)
 
 
 def _apply_holding(symbol: Symbol, holding_data: HoldingInput | None, db: Session) -> None:
@@ -146,11 +152,11 @@ def _analysis_map(
 
 
 def _symbol_detail(db: Session, symbol: Symbol) -> SymbolDetail:
-    research_id = research_symbol_id(db, symbol)
+    research_ids = research_symbol_ids(db, symbol)
     news_items = list(
         db.execute(
             select(NewsItem)
-            .where(NewsItem.symbol_id == research_id)
+            .where(NewsItem.symbol_id.in_(research_ids))
             .order_by(NewsItem.collected_at.desc())
             .limit(30)
         ).scalars()
@@ -158,7 +164,7 @@ def _symbol_detail(db: Session, symbol: Symbol) -> SymbolDetail:
     disclosures = list(
         db.execute(
             select(Disclosure)
-            .where(Disclosure.symbol_id == research_id)
+            .where(Disclosure.symbol_id.in_(research_ids))
             .order_by(Disclosure.collected_at.desc())
             .limit(30)
         ).scalars()

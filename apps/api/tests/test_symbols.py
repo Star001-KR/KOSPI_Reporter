@@ -10,8 +10,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base
-from app.models import Symbol
-from app.routers.symbols import research_symbol_id
+from app.models import NewsItem, Symbol
+from app.routers.symbols import _symbol_detail, research_symbol_ids
 from app.services.symbol_catalog import ListedSymbol
 
 _RUNTIME_CATALOG = (
@@ -20,7 +20,7 @@ _RUNTIME_CATALOG = (
 )
 
 
-class ResearchSymbolIdTests(unittest.TestCase):
+class ResearchSymbolIdsTests(unittest.TestCase):
     def setUp(self) -> None:
         self.engine = create_engine(
             "sqlite://",
@@ -40,16 +40,16 @@ class ResearchSymbolIdTests(unittest.TestCase):
         self.db.commit()
         return symbol
 
-    def test_preferred_redirects_to_registered_common(self) -> None:
+    def test_common_and_preferred_share_one_research_set(self) -> None:
         common = self._add("005930", "삼성전자")
         preferred = self._add("005935", "삼성전자우")
         with patch(
             "app.services.symbol_catalog.listed_symbols", return_value=_RUNTIME_CATALOG
         ):
-            # 삼성전자우 reads the common stock's research rows.
-            self.assertEqual(research_symbol_id(self.db, preferred), common.id)
-            # A common stock maps to itself.
-            self.assertEqual(research_symbol_id(self.db, common), common.id)
+            shared = sorted([common.id, preferred.id])
+            # Either sibling resolves to the union of both ids.
+            self.assertEqual(research_symbol_ids(self.db, preferred), shared)
+            self.assertEqual(research_symbol_ids(self.db, common), shared)
 
     def test_preferred_without_common_uses_itself(self) -> None:
         preferred = self._add("005935", "삼성전자우")
@@ -57,7 +57,42 @@ class ResearchSymbolIdTests(unittest.TestCase):
             "app.services.symbol_catalog.listed_symbols", return_value=_RUNTIME_CATALOG
         ):
             # No common stock registered — the preferred symbol owns its rows.
-            self.assertEqual(research_symbol_id(self.db, preferred), preferred.id)
+            self.assertEqual(research_symbol_ids(self.db, preferred), [preferred.id])
+
+    def test_news_collected_onto_preferred_survives_late_common_registration(
+        self,
+    ) -> None:
+        """Regression: a collection run can store the common stock's news under
+        the preferred stock when the preferred is registered first. Once the
+        common stock is registered too, both feeds must still surface that news
+        instead of going permanently empty."""
+        preferred = self._add("005935", "삼성전자우")
+        self.db.add(
+            NewsItem(
+                symbol_id=preferred.id,
+                title="삼성전자 신규 라인 가동",
+                original_url="https://news.example.com/a",
+                canonical_url="https://news.example.com/a",
+            )
+        )
+        self.db.commit()
+        # The common stock is registered only afterward.
+        common = self._add("005930", "삼성전자")
+
+        with patch(
+            "app.services.symbol_catalog.listed_symbols", return_value=_RUNTIME_CATALOG
+        ):
+            common_titles = [
+                entry.item.title
+                for entry in _symbol_detail(self.db, common).news_items
+            ]
+            preferred_titles = [
+                entry.item.title
+                for entry in _symbol_detail(self.db, preferred).news_items
+            ]
+
+        self.assertIn("삼성전자 신규 라인 가동", common_titles)
+        self.assertIn("삼성전자 신규 라인 가동", preferred_titles)
 
 
 if __name__ == "__main__":
