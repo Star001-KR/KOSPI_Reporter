@@ -25,7 +25,12 @@ from app.schemas import (
 )
 from app.services.mock_data import ensure_mock_activity
 from app.services.prices import get_symbol_prices
-from app.services.symbol_catalog import ListedSymbol, lookup_symbols, resolve_single_symbol
+from app.services.symbol_catalog import (
+    ListedSymbol,
+    collection_identity,
+    lookup_symbols,
+    resolve_single_symbol,
+)
 
 router = APIRouter(prefix="/api/symbols", tags=["symbols"])
 
@@ -39,6 +44,25 @@ def _get_symbol_or_404(db: Session, symbol_id: int) -> Symbol:
     if symbol is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Symbol not found")
     return symbol
+
+
+def research_symbol_id(db: Session, symbol: Symbol) -> int:
+    """The symbol id whose collected news and disclosures represent ``symbol``.
+
+    A preferred stock shares its common stock's research. News and disclosures
+    are stored once (globally unique), owned by whichever symbol collected them
+    first — so when the common stock is also registered, a preferred stock
+    reads the common stock's rows instead of its own empty set.
+    """
+    source_code, _ = collection_identity(symbol.code, symbol.name)
+    if source_code == symbol.code:
+        return symbol.id
+    common_id = db.execute(
+        select(Symbol.id).where(
+            Symbol.market == symbol.market, Symbol.code == source_code
+        )
+    ).scalar_one_or_none()
+    return common_id if common_id is not None else symbol.id
 
 
 def _apply_holding(symbol: Symbol, holding_data: HoldingInput | None, db: Session) -> None:
@@ -122,10 +146,11 @@ def _analysis_map(
 
 
 def _symbol_detail(db: Session, symbol: Symbol) -> SymbolDetail:
+    research_id = research_symbol_id(db, symbol)
     news_items = list(
         db.execute(
             select(NewsItem)
-            .where(NewsItem.symbol_id == symbol.id)
+            .where(NewsItem.symbol_id == research_id)
             .order_by(NewsItem.collected_at.desc())
             .limit(30)
         ).scalars()
@@ -133,7 +158,7 @@ def _symbol_detail(db: Session, symbol: Symbol) -> SymbolDetail:
     disclosures = list(
         db.execute(
             select(Disclosure)
-            .where(Disclosure.symbol_id == symbol.id)
+            .where(Disclosure.symbol_id == research_id)
             .order_by(Disclosure.collected_at.desc())
             .limit(30)
         ).scalars()
