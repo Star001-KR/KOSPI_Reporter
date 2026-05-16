@@ -243,28 +243,22 @@ a {
   gap: var(--sp-2);
   width: 100%;
   min-height: 44px;
-  border: 1px solid var(--line);
+  border: 1px solid #dadce0;
   border-radius: var(--r-md);
-  background: var(--surface-2);
-  color: var(--ink);
+  background: #fff;
+  color: #3c4043;
   font-weight: 700;
 }
 
 .google-login-btn:hover {
-  border-color: var(--line-strong);
-  background: var(--elev);
+  border-color: #d2e3fc;
+  background: #f8fafd;
 }
 
-.google-g {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: #fff;
-  color: #4285f4;
-  font-weight: 800;
+.google-login-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
 }
 
 .app-bar {
