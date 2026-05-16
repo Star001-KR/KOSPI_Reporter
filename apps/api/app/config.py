@@ -5,9 +5,16 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
 DEFAULT_DB_PATH = ROOT_DIR / "data" / "kospi.db"
+
+# Load the repository .env (if present) so OPENDART/NAVER keys and other
+# settings are picked up automatically. Existing environment variables are not
+# overridden, so platform-provided values still take precedence in production.
+load_dotenv(ROOT_DIR / ".env")
 
 
 @dataclass(frozen=True)
