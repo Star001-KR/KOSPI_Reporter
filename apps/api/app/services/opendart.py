@@ -13,10 +13,11 @@ The archive is parsed with the pure-Python ``html.parser`` instead of
 from __future__ import annotations
 
 import io
+import json
 import zipfile
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from html.parser import HTMLParser
 from urllib.parse import urlencode
 from urllib.request import urlopen
@@ -24,13 +25,22 @@ from urllib.request import urlopen
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from kospi_core import DisclosureDraft
+
 from app.config import get_settings
-from app.models import CollectionRun, DartCorpCode, utcnow
+from app.models import CollectionRun, DartCorpCode, Disclosure, Symbol, utcnow
 
 CORP_CODE_URL = "https://opendart.fss.or.kr/api/corpCode.xml"
+OPENDART_LIST_URL = "https://opendart.fss.or.kr/api/list.json"
+DART_VIEWER_URL = "https://dart.fss.or.kr/dsaf001/main.do"
+
 CORP_CODE_RUN_TYPE = "corp_code_import"
+DISCLOSURE_RUN_TYPE = "disclosure_collection"
 
 _DOWNLOAD_TIMEOUT_SECONDS = 60.0
+_REQUEST_TIMEOUT_SECONDS = 30.0
+_DISCLOSURE_LOOKBACK_DAYS = 30
+_DISCLOSURE_PAGE_COUNT = 100
 
 
 class OpenDartError(RuntimeError):
@@ -80,7 +90,7 @@ class _CorpCodeXMLParser(HTMLParser):
             self._current[self._field] += data
 
 
-def _parse_modify_date(value: str | None) -> datetime | None:
+def _parse_yyyymmdd(value: str | None) -> datetime | None:
     text = (value or "").strip()
     if len(text) != 8 or not text.isdigit():
         return None
@@ -108,7 +118,7 @@ def parse_corp_code_xml(xml_bytes: bytes) -> list[CorpCodeEntry]:
                 corp_code=corp_code,
                 corp_name=corp_name,
                 stock_code=stock_code or None,
-                modified_at=_parse_modify_date(record.get("modify_date")),
+                modified_at=_parse_yyyymmdd(record.get("modify_date")),
             )
         )
     return entries
@@ -242,4 +252,215 @@ def run_corp_code_import(
     except Exception as exc:  # broad: any failure must still be recorded
         db.rollback()
         _mark_run_failed(db, run, f"corp code import 중 예상치 못한 오류: {exc}")
+    return run
+
+
+# --- disclosures (MVP-02) ------------------------------------------------
+
+
+def resolve_corp_code(db: Session, stock_code: str) -> str | None:
+    """Look up the OpenDART corp_code mapped to a registered stock code."""
+    return (
+        db.execute(
+            select(DartCorpCode.corp_code).where(
+                DartCorpCode.stock_code == stock_code
+            )
+        )
+        .scalars()
+        .first()
+    )
+
+
+def _http_get_json(url: str) -> dict:
+    """GET a URL and decode the JSON body, raising OpenDartError on failure."""
+    try:
+        with urlopen(url, timeout=_REQUEST_TIMEOUT_SECONDS) as response:
+            payload = response.read()
+    except OSError as exc:
+        raise OpenDartError(f"OpenDART 요청에 실패했습니다: {exc}") from exc
+    try:
+        decoded = json.loads(payload.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise OpenDartError(
+            f"OpenDART 응답을 JSON으로 해석할 수 없습니다: {exc}"
+        ) from exc
+    if not isinstance(decoded, dict):
+        raise OpenDartError("OpenDART 응답 형식이 올바르지 않습니다.")
+    return decoded
+
+
+def _disclosure_list_from_response(data: dict) -> list[dict]:
+    """Apply OpenDART status codes and return the raw disclosure list.
+
+    ``status`` ``"000"`` is success and ``"013"`` means no matching data (an
+    empty list, not an error); any other status becomes an OpenDartError.
+    """
+    status = str(data.get("status", ""))
+    if status == "013":
+        return []
+    if status != "000":
+        raise OpenDartError(
+            f"OpenDART list.json 오류 (status={status}): "
+            f"{data.get('message') or '메시지 없음'}"
+        )
+    items = data.get("list", [])
+    if not isinstance(items, list):
+        return []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def fetch_disclosure_list(
+    api_key: str, corp_code: str, bgn_de: str, end_de: str
+) -> list[dict]:
+    """Fetch the first page of recent disclosures for a corp_code from OpenDART."""
+    params = {
+        "crtfc_key": api_key,
+        "corp_code": corp_code,
+        "bgn_de": bgn_de,
+        "end_de": end_de,
+        "page_no": "1",
+        "page_count": str(_DISCLOSURE_PAGE_COUNT),
+    }
+    data = _http_get_json(f"{OPENDART_LIST_URL}?{urlencode(params)}")
+    return _disclosure_list_from_response(data)
+
+
+def parse_disclosures(raw_list: Iterable[dict]) -> list[DisclosureDraft]:
+    """Convert raw OpenDART disclosure rows into DisclosureDraft records."""
+    drafts: list[DisclosureDraft] = []
+    for raw in raw_list:
+        rcept_no = str(raw.get("rcept_no", "")).strip()
+        report_name = str(raw.get("report_nm", "")).strip()
+        if not rcept_no or not report_name:
+            continue
+        drafts.append(
+            DisclosureDraft(
+                rcept_no=rcept_no,
+                report_name=report_name,
+                original_url=f"{DART_VIEWER_URL}?{urlencode({'rcpNo': rcept_no})}",
+                corp_code=str(raw.get("corp_code", "")).strip() or None,
+                corp_name=str(raw.get("corp_name", "")).strip() or None,
+                submitted_at=_parse_yyyymmdd(raw.get("rcept_dt")),
+                raw_payload=raw,
+            )
+        )
+    return drafts
+
+
+def store_disclosures(
+    db: Session, symbol_id: int, drafts: Iterable[DisclosureDraft]
+) -> int:
+    """Insert disclosure drafts, skipping any ``rcept_no`` already stored.
+
+    Returns the number of newly inserted rows. ``rcept_no`` is globally unique,
+    so re-collecting the same period never creates duplicate rows.
+    """
+    inserted = 0
+    seen: set[str] = set()
+    for draft in drafts:
+        if draft.rcept_no in seen:
+            continue
+        seen.add(draft.rcept_no)
+        already_stored = db.execute(
+            select(Disclosure.id).where(Disclosure.rcept_no == draft.rcept_no)
+        ).first()
+        if already_stored is not None:
+            continue
+        db.add(
+            Disclosure(
+                symbol_id=symbol_id,
+                rcept_no=draft.rcept_no,
+                report_name=draft.report_name,
+                corp_code=draft.corp_code,
+                corp_name=draft.corp_name,
+                submitted_at=draft.submitted_at,
+                original_url=draft.original_url,
+                raw_payload=draft.raw_payload,
+            )
+        )
+        inserted += 1
+    return inserted
+
+
+def _default_disclosure_fetcher(
+    api_key: str,
+) -> Callable[[str, str, str], list[dict]]:
+    def fetch(corp_code: str, bgn_de: str, end_de: str) -> list[dict]:
+        return fetch_disclosure_list(api_key, corp_code, bgn_de, end_de)
+
+    return fetch
+
+
+def _run_summary(
+    label: str, total: int, processed: int, inserted: int, failures: list[str]
+) -> str:
+    summary = f"{label}: 종목 {processed}/{total} 처리, 신규 {inserted}건."
+    if failures:
+        summary += f" 실패 {len(failures)}건 — " + "; ".join(failures)
+    return summary
+
+
+def collect_disclosures(
+    db: Session,
+    *,
+    api_key: str | None = None,
+    fetcher: Callable[[str, str, str], list[dict]] | None = None,
+    lookback_days: int = _DISCLOSURE_LOOKBACK_DAYS,
+) -> CollectionRun:
+    """Collect recent OpenDART disclosures for every registered symbol.
+
+    The result is recorded as a :class:`CollectionRun`. Symbols without a
+    mapped corp_code or with a failing request are reported in ``message``
+    while disclosures that did succeed are still stored (partial success).
+    """
+    if api_key is None:
+        api_key = get_settings().opendart_api_key
+
+    run = CollectionRun(run_type=DISCLOSURE_RUN_TYPE, status="running")
+    db.add(run)
+    db.commit()
+
+    try:
+        if not api_key:
+            raise OpenDartError(
+                "OPENDART_API_KEY가 설정되지 않아 공시 수집을 실행할 수 없습니다."
+            )
+
+        active_fetcher = fetcher or _default_disclosure_fetcher(api_key)
+        symbols = list(db.execute(select(Symbol)).scalars())
+        today = date.today()
+        bgn_de = (today - timedelta(days=lookback_days)).strftime("%Y%m%d")
+        end_de = today.strftime("%Y%m%d")
+
+        processed = 0
+        inserted_total = 0
+        failures: list[str] = []
+        for symbol in symbols:
+            corp_code = resolve_corp_code(db, symbol.code)
+            if corp_code is None:
+                failures.append(f"{symbol.name}({symbol.code}): corp_code 미매핑")
+                continue
+            try:
+                raw = active_fetcher(corp_code, bgn_de, end_de)
+                inserted_total += store_disclosures(
+                    db, symbol.id, parse_disclosures(raw)
+                )
+                processed += 1
+            except OpenDartError as exc:
+                failures.append(f"{symbol.name}({symbol.code}): {exc}")
+
+        run.symbols_processed = processed
+        run.disclosures_inserted = inserted_total
+        run.finished_at = utcnow()
+        run.status = "failed" if symbols and processed == 0 else "success"
+        run.message = _run_summary(
+            "공시 수집", len(symbols), processed, inserted_total, failures
+        )
+        db.commit()
+    except OpenDartError as exc:
+        db.rollback()
+        _mark_run_failed(db, run, str(exc))
+    except Exception as exc:  # broad: any failure must still be recorded
+        db.rollback()
+        _mark_run_failed(db, run, f"공시 수집 중 예상치 못한 오류: {exc}")
     return run

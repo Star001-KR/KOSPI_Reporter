@@ -258,7 +258,7 @@ Verification:
 
 ### MVP-02 OpenDART Disclosure Collector
 
-Status: not-started
+Status: done
 
 Depends on: MVP-01
 

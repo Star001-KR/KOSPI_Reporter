@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends
 
 from app.database import get_db
 from app.schemas import CollectionRunRead
-from app.services.opendart import run_corp_code_import
+from app.services.opendart import collect_disclosures, run_corp_code_import
 
 router = APIRouter(prefix="/api/collections", tags=["collections"])
 
@@ -20,4 +20,15 @@ def import_corp_codes(db: Session = Depends(get_db)) -> CollectionRunRead:
     explanatory ``message`` rather than as an HTTP error.
     """
     run = run_corp_code_import(db)
+    return CollectionRunRead.model_validate(run)
+
+
+@router.post("/disclosures", response_model=CollectionRunRead)
+def collect_disclosure_run(db: Session = Depends(get_db)) -> CollectionRunRead:
+    """Collect recent OpenDART disclosures for every registered symbol.
+
+    As with the corp code import, a missing API key or a failed collection is
+    reported as a run with ``status = "failed"`` rather than an HTTP error.
+    """
+    run = collect_disclosures(db)
     return CollectionRunRead.model_validate(run)
