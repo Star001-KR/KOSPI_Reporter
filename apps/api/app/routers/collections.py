@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends
 
 from app.database import get_db
 from app.schemas import CollectionRunRead
+from app.services.analyzer import analyze_pending
 from app.services.naver_news import collect_news
 from app.services.opendart import collect_disclosures, run_corp_code_import
 
@@ -43,4 +44,14 @@ def collect_news_run(db: Session = Depends(get_db)) -> CollectionRunRead:
     ``status = "failed"`` rather than an HTTP error.
     """
     run = collect_news(db)
+    return CollectionRunRead.model_validate(run)
+
+
+@router.post("/analyze", response_model=CollectionRunRead)
+def analyze_run(db: Session = Depends(get_db)) -> CollectionRunRead:
+    """Analyze collected news and disclosures that have no analysis result yet.
+
+    Uses the keyless rule-based analyzer, so it runs without any external key.
+    """
+    run = analyze_pending(db)
     return CollectionRunRead.model_validate(run)

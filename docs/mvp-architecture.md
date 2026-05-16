@@ -310,7 +310,7 @@ Verification:
 
 ### MVP-04 Analyzer Adapter
 
-Status: not-started
+Status: done
 
 Depends on: MVP-02, MVP-03
 
