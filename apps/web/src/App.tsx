@@ -61,7 +61,6 @@ type ResearchStock = {
   changePct: number;
   profitLoss: number;
   profitLossPct: number;
-  issueCount: number;
   unreadCount: number;
   newsCount: number;
   disclosureCount: number;
@@ -712,7 +711,6 @@ function buildStocks(
       changePct,
       profitLoss,
       profitLossPct,
-      issueCount: newsCount + disclosureCount,
       unreadCount,
       newsCount,
       disclosureCount,
@@ -999,9 +997,11 @@ function App() {
     });
   }
 
-  function goToFeed(stockCode?: string) {
+  // The recent-arrival card passes the issue it is showing so the feed opens
+  // with that exact item selected, not just the stock filtered.
+  function goToFeed(stockCode?: string, issueId?: string) {
     setFilter(stockCode ? { stockCode } : {});
-    setSelectedIssueId(null);
+    setSelectedIssueId(issueId ?? null);
     setView("feed");
   }
 
@@ -1084,7 +1084,7 @@ function App() {
               onRefresh={handleRefreshCollection}
               onReorder={reorderWatchlist}
               onRemove={removeFromWatchlist}
-              onPlanetClick={(stock) => goToFeed(stock.code)}
+              onPlanetClick={(stock, issueId) => goToFeed(stock.code, issueId)}
             />
           )
         ) : (
@@ -1375,7 +1375,7 @@ function Dashboard({
   onRefresh: () => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
   onRemove: (stock: ResearchStock) => void;
-  onPlanetClick: (stock: ResearchStock) => void;
+  onPlanetClick: (stock: ResearchStock, issueId?: string) => void;
 }) {
   return (
     <div className="dashboard">
@@ -1410,7 +1410,7 @@ function CollectionPane({
   countdown: string;
   refreshing: boolean;
   onRefresh: () => void;
-  onPlanetClick: (stock: ResearchStock) => void;
+  onPlanetClick: (stock: ResearchStock, issueId?: string) => void;
 }) {
   const recentItems = useMemo(
     () => issues.slice(0, RECENT_ARRIVAL_LIMIT),
@@ -1447,7 +1447,7 @@ function CollectionPane({
       return (((index + delta) % len) + len) % len;
     });
   }
-  const totalNew = stocks.reduce((sum, stock) => sum + stock.issueCount, 0);
+  const totalNew = stocks.reduce((sum, stock) => sum + stock.unreadCount, 0);
   const lastCollected = issues.reduce<string | null>(
     (latest, issue) =>
       !latest || issue.collectedAt > latest ? issue.collectedAt : latest,
@@ -1478,7 +1478,7 @@ function CollectionPane({
             type="button"
             key={recent.id}
             className="recent-arrival-main"
-            onClick={() => onPlanetClick(recentStock)}
+            onClick={() => onPlanetClick(recentStock, recent.id)}
           >
             <span className="meta">최근 도착</span>
             <span className="when soft">{formatTime(recent.occurredAt)}</span>
@@ -1798,15 +1798,14 @@ function Planet({
   onHover: (code: string | null) => void;
   onClick: (stock: ResearchStock) => void;
 }) {
-  const size = stock.issueCount > 0 ? Math.min(82, 28 + stock.issueCount * 10.5) : 28;
-  const hasNews = stock.issueCount > 0;
+  const size = stock.unreadCount > 0 ? Math.min(82, 28 + stock.unreadCount * 10.5) : 28;
   const hasUnread = stock.unreadCount > 0;
   const fontSize = Math.max(11, Math.min(22, size * 0.42));
   return (
     <button
       className="planet"
       data-hover={hovered ? "true" : "false"}
-      data-has-news={hasNews ? "true" : "false"}
+      data-has-news={hasUnread ? "true" : "false"}
       onMouseEnter={() => onHover(stock.code)}
       onMouseLeave={() => onHover(null)}
       onFocus={() => onHover(stock.code)}
@@ -1816,10 +1815,10 @@ function Planet({
     >
       <span
         className="planet-disc"
-        data-has-news={hasNews ? "true" : "false"}
+        data-has-news={hasUnread ? "true" : "false"}
         style={{ width: size, height: size, fontSize }}
       >
-        {hasNews ? stock.issueCount : ""}
+        {hasUnread ? stock.unreadCount : ""}
         {hasUnread && <span className="planet-blip" />}
       </span>
       <span className="planet-label">{stock.name}</span>
