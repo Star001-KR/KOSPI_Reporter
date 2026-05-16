@@ -606,12 +606,6 @@ a {
   color: var(--ink);
 }
 
-.type-badge--rep {
-  border: 1px solid var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
 .sent {
   display: inline-flex;
   align-items: center;
@@ -1141,6 +1135,11 @@ a {
   box-shadow: var(--shadow-2);
 }
 
+.stock-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .stock-card[data-dragging="true"] {
   opacity: 0.45;
 }
@@ -1171,6 +1170,30 @@ a {
   gap: 6px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.stock-card-report-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--ink-soft);
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
+}
+
+.stock-card-report-link:hover,
+.stock-card-report-link:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .drag-handle {

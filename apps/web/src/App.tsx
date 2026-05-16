@@ -42,7 +42,7 @@ import type {
 } from "./types";
 
 type ViewName = "dashboard" | "feed";
-type IssueType = "news" | "disc" | "rep";
+type IssueType = "news" | "disc";
 type SentKey = "pos" | "neg" | "neu";
 type MarketFilter = "all" | "KOSPI" | "KOSDAQ";
 
@@ -62,7 +62,6 @@ type ResearchStock = {
   unreadCount: number;
   newsCount: number;
   disclosureCount: number;
-  reportCount: number;
   latestCollectedAt: string | null;
   dominantSent: SentKey;
   spark: DailyPrice[];
@@ -274,8 +273,19 @@ function sentimentLabel(sentiment: SentKey): string {
 
 function typeLabel(type: IssueType): string {
   if (type === "news") return "NEWS";
-  if (type === "disc") return "공시";
-  return "리포트";
+  return "공시";
+}
+
+function naverResearchUrl(stock: Pick<ResearchStock, "code">): string {
+  const params = new URLSearchParams({
+    keyword: "",
+    brokerCode: "",
+    writeFromDate: "",
+    writeToDate: "",
+    searchType: "itemCode",
+    itemCode: stock.code,
+  });
+  return `https://finance.naver.com/research/company_list.naver?${params.toString()}`;
 }
 
 function analysisKeywords(analysis: AnalysisResult | null): string[] {
@@ -700,7 +710,6 @@ function buildStocks(
       unreadCount,
       newsCount,
       disclosureCount,
-      reportCount: 0,
       latestCollectedAt: latestCollectedFromDetail(detail),
       dominantSent,
       spark,
@@ -1434,19 +1443,27 @@ function StockCard({
   onDropCard: () => void;
   onDragEnd: () => void;
 }) {
-  const cardRef = useRef<HTMLButtonElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
   const up = stock.changePct >= 0;
   const hasChange = stock.spark.length > 1;
   const hasValuation =
     stock.quantity !== null && stock.averageCost !== null && stock.spark.length > 0;
   return (
-    <button
+    <div
       ref={cardRef}
-      type="button"
+      role="button"
+      tabIndex={0}
       className="stock-card"
       data-dragging={dragging ? "true" : undefined}
       data-drop-target={dropTarget ? "true" : undefined}
       onClick={onOpen}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen();
+        }
+      }}
       onDragEnter={(event) => {
         event.preventDefault();
         onDragEnterCard();
@@ -1482,6 +1499,18 @@ function StockCard({
         <span className="name">{stock.name}</span>
         <span className="spacer" />
         <MktChip market={stock.market} />
+        <a
+          className="stock-card-report-link"
+          href={naverResearchUrl(stock)}
+          target="_blank"
+          rel="noreferrer"
+          title={`${stock.name} 네이버 리포트`}
+          aria-label={`${stock.name} 네이버 리포트 새 탭으로 열기`}
+          onClick={(event) => event.stopPropagation()}
+          onDragStart={(event) => event.preventDefault()}
+        >
+          <FileText size={14} />
+        </a>
       </div>
       <div className="row stock-price-row">
         <span className="price">{formatMoney(stock.price)}</span>
@@ -1506,7 +1535,7 @@ function StockCard({
           <span className="pl pl--muted">-</span>
         )}
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -1600,7 +1629,7 @@ function Planet({
       onFocus={() => onHover(stock.code)}
       onBlur={() => onHover(null)}
       onClick={() => onClick(stock)}
-      aria-label={`${stock.name}: 뉴스 ${stock.newsCount}, 공시 ${stock.disclosureCount}, 리포트 ${stock.reportCount}`}
+      aria-label={`${stock.name}: 뉴스 ${stock.newsCount}, 공시 ${stock.disclosureCount}`}
     >
       <span
         className="planet-disc"
@@ -1618,9 +1647,6 @@ function Planet({
           </span>
           <span>
             <span className="ttkey">공시</span> <b>{stock.disclosureCount}</b>
-          </span>
-          <span>
-            <span className="ttkey">리포트</span> <b>{stock.reportCount}</b>
           </span>
         </span>
       )}
@@ -1735,7 +1761,6 @@ function FeedFilters({
     { value: "all", label: "전체" },
     { value: "news", label: "뉴스" },
     { value: "disc", label: "공시" },
-    { value: "rep", label: "리포트" },
   ];
   const sentiments: Array<{ value: SentKey | "all"; label: string }> = [
     { value: "all", label: "감성 전체" },
