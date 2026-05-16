@@ -1441,6 +1441,7 @@ a {
 }
 
 .feed-item {
+  position: relative;
   display: flex;
   gap: var(--sp-3);
   width: 100%;
@@ -1514,15 +1515,18 @@ a {
 }
 
 .feed-unread-dot {
-  flex-shrink: 0;
-  width: 7px;
-  height: 7px;
+  position: absolute;
+  top: var(--sp-3);
+  right: var(--sp-4);
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: transparent;
 }
 
 .feed-unread-dot[data-unread="true"] {
   background: var(--neg);
+  box-shadow: 0 0 0 2px var(--surface);
 }
 
 .feed-item .title {
