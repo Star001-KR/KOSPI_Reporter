@@ -1117,15 +1117,25 @@ a {
   color: var(--ink);
   padding: var(--sp-3);
   text-align: left;
-  cursor: grab;
+  cursor: pointer;
   transition:
     border-color var(--dur-fast) var(--ease),
-    box-shadow var(--dur-fast) var(--ease);
+    box-shadow var(--dur-fast) var(--ease),
+    opacity var(--dur-fast) var(--ease);
 }
 
 .stock-card:hover {
   border-color: var(--line);
   box-shadow: var(--shadow-2);
+}
+
+.stock-card[data-dragging="true"] {
+  opacity: 0.45;
+}
+
+.stock-card[data-drop-target="true"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .row {
@@ -1152,9 +1162,19 @@ a {
 }
 
 .drag-handle {
+  display: inline-flex;
+  align-items: center;
   color: var(--ink-muted);
   cursor: grab;
   line-height: 1;
+}
+
+.drag-handle:hover {
+  color: var(--ink-soft);
+}
+
+.drag-handle:active {
+  cursor: grabbing;
 }
 
 .price {

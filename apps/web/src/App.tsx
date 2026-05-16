@@ -893,6 +893,25 @@ function App() {
     setView("feed");
   }
 
+  // Reorder watchlist entries (and persist) for hand-sorted dashboard cards;
+  // card order mirrors watchlist order through buildStocks.
+  function reorderWatchlist(fromIndex: number, toIndex: number) {
+    if (
+      fromIndex === toIndex ||
+      fromIndex < 0 ||
+      toIndex < 0 ||
+      fromIndex >= watchlist.length ||
+      toIndex >= watchlist.length
+    ) {
+      return;
+    }
+    const next = [...watchlist];
+    const [moved] = next.splice(fromIndex, 1);
+    next.splice(toIndex, 0, moved);
+    setWatchlist(next);
+    saveWatchlist(next);
+  }
+
   const watchlistEmpty = !isLoading && watchlist.length === 0;
 
   return (
@@ -925,6 +944,7 @@ function App() {
               countdown={countdown}
               refreshing={isBusy}
               onRefresh={handleRefreshCollection}
+              onReorder={reorderWatchlist}
               onPlanetClick={(stock) => goToFeed(stock.code)}
             />
           )
@@ -1121,6 +1141,7 @@ function Dashboard({
   countdown,
   refreshing,
   onRefresh,
+  onReorder,
   onPlanetClick,
 }: {
   stocks: ResearchStock[];
@@ -1128,6 +1149,7 @@ function Dashboard({
   countdown: string;
   refreshing: boolean;
   onRefresh: () => void;
+  onReorder: (fromIndex: number, toIndex: number) => void;
   onPlanetClick: (stock: ResearchStock) => void;
 }) {
   return (
@@ -1140,7 +1162,7 @@ function Dashboard({
         onRefresh={onRefresh}
         onPlanetClick={onPlanetClick}
       />
-      <HoldingsPane stocks={stocks} onOpen={onPlanetClick} />
+      <HoldingsPane stocks={stocks} onOpen={onPlanetClick} onReorder={onReorder} />
     </div>
   );
 }
@@ -1266,10 +1288,14 @@ function CollectionPane({
 function HoldingsPane({
   stocks,
   onOpen,
+  onReorder,
 }: {
   stocks: ResearchStock[];
   onOpen: (stock: ResearchStock) => void;
+  onReorder: (fromIndex: number, toIndex: number) => void;
 }) {
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [overIndex, setOverIndex] = useState<number | null>(null);
   const totalMarketValue = stocks.reduce((sum, stock) => sum + stock.marketValue, 0);
   const totalCost = stocks.reduce((sum, stock) => {
     if (!stock.quantity || !stock.averageCost) return sum + stock.marketValue;
@@ -1277,6 +1303,12 @@ function HoldingsPane({
   }, 0);
   const totalProfit = totalMarketValue - totalCost;
   const totalProfitPct = totalCost > 0 ? (totalProfit / totalCost) * 100 : 0;
+
+  function endDrag() {
+    setDragIndex(null);
+    setOverIndex(null);
+  }
+
   return (
     <section className="dash-pane">
       <div className="holdings-head">
@@ -1302,20 +1334,91 @@ function HoldingsPane({
         <span className="spacer" />
       </div>
       <div className="holdings-grid">
-        {stocks.map((stock) => (
-          <StockCard key={stock.id} stock={stock} onOpen={() => onOpen(stock)} />
+        {stocks.map((stock, index) => (
+          <StockCard
+            key={`${stock.market}:${stock.code}`}
+            stock={stock}
+            index={index}
+            dragging={dragIndex === index}
+            dropTarget={
+              overIndex === index && dragIndex !== null && dragIndex !== index
+            }
+            onOpen={() => onOpen(stock)}
+            onDragStart={() => setDragIndex(index)}
+            onDragEnterCard={() => setOverIndex(index)}
+            onDropCard={() => {
+              if (dragIndex !== null) onReorder(dragIndex, index);
+              endDrag();
+            }}
+            onDragEnd={endDrag}
+          />
         ))}
       </div>
     </section>
   );
 }
 
-function StockCard({ stock, onOpen }: { stock: ResearchStock; onOpen: () => void }) {
+function StockCard({
+  stock,
+  index,
+  dragging,
+  dropTarget,
+  onOpen,
+  onDragStart,
+  onDragEnterCard,
+  onDropCard,
+  onDragEnd,
+}: {
+  stock: ResearchStock;
+  index: number;
+  dragging: boolean;
+  dropTarget: boolean;
+  onOpen: () => void;
+  onDragStart: () => void;
+  onDragEnterCard: () => void;
+  onDropCard: () => void;
+  onDragEnd: () => void;
+}) {
+  const cardRef = useRef<HTMLButtonElement>(null);
   const up = stock.changePct >= 0;
   return (
-    <button className="stock-card" onClick={onOpen}>
+    <button
+      ref={cardRef}
+      type="button"
+      className="stock-card"
+      data-dragging={dragging ? "true" : undefined}
+      data-drop-target={dropTarget ? "true" : undefined}
+      onClick={onOpen}
+      onDragEnter={(event) => {
+        event.preventDefault();
+        onDragEnterCard();
+      }}
+      onDragOver={(event) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        onDropCard();
+      }}
+    >
       <div className="row">
-        <span className="drag-handle">
+        <span
+          className="drag-handle"
+          draggable
+          onClick={(event) => event.stopPropagation()}
+          onDragStart={(event) => {
+            event.dataTransfer.effectAllowed = "move";
+            event.dataTransfer.setData("text/plain", String(index));
+            if (cardRef.current) {
+              event.dataTransfer.setDragImage(cardRef.current, 24, 20);
+            }
+            onDragStart();
+          }}
+          onDragEnd={onDragEnd}
+          aria-label={`${stock.name} 카드 순서 이동`}
+          title="드래그해서 카드 순서를 바꿀 수 있어요"
+        >
           <GripVertical size={14} />
         </span>
         <span className="name">{stock.name}</span>
