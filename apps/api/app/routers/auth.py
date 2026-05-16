@@ -61,7 +61,7 @@ def _clear_session_cookie(response: Response) -> None:
 def _clear_state_cookie(response: Response) -> None:
     response.delete_cookie(
         OAUTH_STATE_COOKIE_NAME,
-        path="/api/auth/google",
+        path="/api/auth",
         samesite="lax",
     )
 
@@ -99,11 +99,12 @@ def start_google_login() -> RedirectResponse:
         httponly=True,
         secure=settings.auth_cookie_secure,
         samesite="lax",
-        path="/api/auth/google",
+        path="/api/auth",
     )
     return response
 
 
+@router.get("/api/auth/google-callback")
 @router.get("/api/auth/google/callback")
 def finish_google_login(
     code: str | None = None,
