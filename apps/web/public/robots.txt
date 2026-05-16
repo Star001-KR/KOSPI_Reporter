@@ -1,0 +1,6 @@
+# KOSPI Reporter
+User-agent: *
+Allow: /
+
+# 배포 도메인이 확정되면 절대 URL로 갱신한다 (MVP-11).
+Sitemap: https://kospi-reporter.example.com/sitemap.xml

@@ -469,7 +469,7 @@ Verification:
 
 ### MVP-10 Public Read UX And SEO
 
-Status: not-started
+Status: done
 
 Depends on: MVP-09
 

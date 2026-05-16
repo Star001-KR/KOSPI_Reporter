@@ -1095,6 +1095,46 @@ a {
   background: var(--line-soft);
 }
 
+.feed-search {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 220px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  color: var(--ink-muted);
+}
+
+.feed-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  outline: none;
+}
+
+.feed-search-clear {
+  display: flex;
+  border: none;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+.app-footer {
+  flex-shrink: 0;
+  padding: var(--sp-3) var(--sp-5);
+  border-top: 1px solid var(--line-soft);
+  color: var(--ink-muted);
+  font-size: var(--fs-12);
+  line-height: 1.6;
+  text-align: center;
+}
+
 .feed {
   display: grid;
   flex: 1;

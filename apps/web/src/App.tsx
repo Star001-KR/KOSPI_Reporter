@@ -388,6 +388,12 @@ function App() {
 
   useEffect(() => {
     refresh()
+      .then(() => {
+        // A first-time visitor (empty watchlist) lands on the public feed.
+        if (loadWatchlist().length === 0) {
+          setView("feed");
+        }
+      })
       .catch((err: Error) => setError(err.message))
       .finally(() => setIsLoading(false));
   }, [refresh]);
@@ -497,6 +503,12 @@ function App() {
           />
         )}
       </main>
+
+      <footer className="app-footer">
+        KOSPI Reporter는 OpenDART 공시와 Naver 뉴스를 수집·요약해 제공하는 정보
+        서비스입니다. 투자 조언이 아니며, 투자 판단과 그 결과의 책임은 이용자
+        본인에게 있습니다.
+      </footer>
 
       <RegisterModal
         open={modalOpen}
@@ -895,17 +907,25 @@ function Feed({
   selectedIssueId: string | null;
   setSelectedIssueId: (id: string | null) => void;
 }) {
-  const visible = useMemo(
-    () =>
-      issues.filter((issue) => {
-        if (filter.stockCode && issue.stockCode !== filter.stockCode) return false;
-        if (filter.type && issue.type !== filter.type) return false;
-        if (filter.sentiment && issue.sentiment !== filter.sentiment) return false;
-        if (filter.minImportance && issue.importance < filter.minImportance) return false;
-        return true;
-      }),
-    [issues, filter],
-  );
+  const [query, setQuery] = useState("");
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return issues.filter((issue) => {
+      if (filter.stockCode && issue.stockCode !== filter.stockCode) return false;
+      if (filter.type && issue.type !== filter.type) return false;
+      if (filter.sentiment && issue.sentiment !== filter.sentiment) return false;
+      if (filter.minImportance && issue.importance < filter.minImportance) return false;
+      if (
+        q &&
+        !`${issue.stockName} ${issue.stockCode} ${issue.title}`
+          .toLowerCase()
+          .includes(q)
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }, [issues, filter, query]);
   const selected = visible.find((issue) => issue.id === selectedIssueId) ?? visible[0] ?? null;
 
   useEffect(() => {
@@ -916,7 +936,13 @@ function Feed({
 
   return (
     <div className="col feed-view">
-      <FeedFilters stocks={stocks} filter={filter} setFilter={setFilter} />
+      <FeedFilters
+        stocks={stocks}
+        filter={filter}
+        setFilter={setFilter}
+        query={query}
+        setQuery={setQuery}
+      />
       <div className="feed">
         <div className="feed-list">
           {visible.length === 0 && (
@@ -946,10 +972,14 @@ function FeedFilters({
   stocks,
   filter,
   setFilter,
+  query,
+  setQuery,
 }: {
   stocks: ResearchStock[];
   filter: FeedFilter;
   setFilter: (filter: FeedFilter) => void;
+  query: string;
+  setQuery: (value: string) => void;
 }) {
   const types: Array<{ value: IssueType | "all"; label: string }> = [
     { value: "all", label: "전체" },
@@ -965,6 +995,25 @@ function FeedFilters({
   ];
   return (
     <div className="feed-filters">
+      <div className="feed-search">
+        <Search size={15} />
+        <input
+          placeholder="종목명·코드·제목 검색"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          aria-label="피드 검색"
+        />
+        {query && (
+          <button
+            type="button"
+            className="feed-search-clear"
+            onClick={() => setQuery("")}
+            aria-label="검색어 지우기"
+          >
+            <X size={13} />
+          </button>
+        )}
+      </div>
       <span className="filter-label">종목</span>
       <div className="filter-group">
         <Chip active={!filter.stockCode} onClick={() => setFilter({ ...filter, stockCode: null })}>
