@@ -8,6 +8,8 @@ from unittest.mock import patch
 
 from app.services.symbol_catalog import (
     ListedSymbol,
+    collection_identity,
+    common_stock,
     listed_symbols,
     lookup_symbols,
     parse_krx_stock_finder,
@@ -69,6 +71,31 @@ class SymbolCatalogTests(unittest.TestCase):
             # A common-stock query surfaces the preferred share too.
             codes = [item.code for item in lookup_symbols("삼성전자", market="KOSPI")]
             self.assertEqual(codes, ["005930", "005935"])
+
+    def test_collection_identity_redirects_preferred_to_common(self) -> None:
+        runtime = (
+            ListedSymbol("KOSPI", "005930", "삼성전자"),
+            ListedSymbol("KOSPI", "005935", "삼성전자우"),
+        )
+        with patch("app.services.symbol_catalog.listed_symbols", return_value=runtime):
+            # A preferred stock collects under its common stock's identity.
+            self.assertEqual(
+                collection_identity("005935", "삼성전자우"), ("005930", "삼성전자")
+            )
+            self.assertEqual(common_stock("005935"), runtime[0])
+            # A common stock maps to itself and is not treated as preferred.
+            self.assertEqual(
+                collection_identity("005930", "삼성전자"), ("005930", "삼성전자")
+            )
+            self.assertIsNone(common_stock("005930"))
+
+    def test_collection_identity_keeps_symbol_when_common_absent(self) -> None:
+        # Preferred-looking code whose common stock is not in the catalog.
+        runtime = (ListedSymbol("KOSPI", "005930", "삼성전자"),)
+        with patch("app.services.symbol_catalog.listed_symbols", return_value=runtime):
+            self.assertEqual(
+                collection_identity("900945", "낯선우"), ("900945", "낯선우")
+            )
 
 
 if __name__ == "__main__":

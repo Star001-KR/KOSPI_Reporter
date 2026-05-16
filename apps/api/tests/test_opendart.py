@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import unittest
 import zipfile
+from unittest.mock import patch
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -24,6 +25,7 @@ from app.services.opendart import (
     store_disclosures,
     upsert_corp_codes,
 )
+from app.services.symbol_catalog import ListedSymbol
 
 SAMPLE_XML = (
     '<?xml version="1.0" encoding="UTF-8"?>'
@@ -281,6 +283,32 @@ class DisclosureCollectionTests(unittest.TestCase):
         )
         self.assertEqual(len(stored), 2)
 
+    def test_collect_disclosures_redirects_preferred_to_common(self) -> None:
+        # Register 삼성전자우; map the corp_code under the common stock code only.
+        self.db.add(Symbol(market="KOSPI", code="005935", name="삼성전자우"))
+        self.db.add(
+            DartCorpCode(
+                corp_code="00126380", stock_code="005930", corp_name="삼성전자"
+            )
+        )
+        self.db.commit()
+        captured: dict[str, str] = {}
+
+        def fake_fetcher(corp_code: str, bgn_de: str, end_de: str) -> list[dict]:
+            captured["corp_code"] = corp_code
+            return SAMPLE_DISCLOSURES
+
+        runtime = (
+            ListedSymbol("KOSPI", "005930", "삼성전자"),
+            ListedSymbol("KOSPI", "005935", "삼성전자우"),
+        )
+        with patch(
+            "app.services.symbol_catalog.listed_symbols", return_value=runtime
+        ):
+            run = collect_disclosures(self.db, api_key="k", fetcher=fake_fetcher)
+        self.assertEqual(run.status, "success")
+        self.assertEqual(captured["corp_code"], "00126380")
+
     def test_collect_disclosures_is_idempotent(self) -> None:
         self._seed_symbol()
 
@@ -294,7 +322,7 @@ class DisclosureCollectionTests(unittest.TestCase):
         self.assertEqual(second.status, "success")
 
     def test_collect_disclosures_missing_corp_code_fails(self) -> None:
-        self._seed_symbol(code="999999", name="미매핑종목", corp_code=None)
+        self._seed_symbol(code="999990", name="미매핑종목", corp_code=None)
         run = collect_disclosures(
             self.db, api_key="k", fetcher=lambda *_args: SAMPLE_DISCLOSURES
         )
@@ -303,7 +331,7 @@ class DisclosureCollectionTests(unittest.TestCase):
 
     def test_collect_disclosures_partial_success(self) -> None:
         self._seed_symbol(code="005930", name="삼성전자", corp_code="00126380")
-        self._seed_symbol(code="999999", name="미매핑종목", corp_code=None)
+        self._seed_symbol(code="999990", name="미매핑종목", corp_code=None)
         run = collect_disclosures(
             self.db, api_key="k", fetcher=lambda *_args: SAMPLE_DISCLOSURES
         )

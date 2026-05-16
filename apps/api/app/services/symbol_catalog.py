@@ -275,3 +275,36 @@ def resolve_single_symbol(
     if len(matches) == 1:
         return matches[0], []
     return None, matches
+
+
+def common_stock(code: str) -> ListedSymbol | None:
+    """Return the common stock that shares a preferred stock's issuer.
+
+    KRX gives a company's common shares a six-digit code ending in 0 and its
+    preferred shares the same five-digit issuer stem with a non-zero last digit
+    (삼성전자 005930 / 삼성전자우 005935). Returns None when ``code`` is not a
+    preferred-stock code, or when the common stock is absent from the catalog.
+    """
+    normalized = normalize_code(code)
+    if not normalized or len(normalized) != 6 or not normalized.isdigit():
+        return None
+    if normalized.endswith("0"):
+        return None
+    common_code = normalized[:-1] + "0"
+    return next(
+        (item for item in listed_symbols() if item.code == common_code),
+        None,
+    )
+
+
+def collection_identity(code: str, name: str) -> tuple[str, str]:
+    """Return the (code, name) whose news and disclosures represent a symbol.
+
+    Preferred stocks carry no news or disclosures of their own, so collection
+    redirects them to their common stock (삼성전자우 → 삼성전자). Common stocks,
+    and preferred stocks whose common share is unknown, map to themselves.
+    """
+    common = common_stock(code)
+    if common is not None:
+        return common.code, common.name
+    return code, name
