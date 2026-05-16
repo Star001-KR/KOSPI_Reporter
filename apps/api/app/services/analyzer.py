@@ -100,6 +100,15 @@ def _analyze_disclosures(db: Session, analyzer: Analyzer) -> int:
     return count
 
 
+def analyze_targets(db: Session, analyzer: Analyzer) -> tuple[int, int]:
+    """Analyze every news and disclosure row that has no analysis yet.
+
+    Returns ``(news_count, disclosure_count)`` of newly analyzed rows. Rows are
+    added to the session without committing.
+    """
+    return _analyze_news(db, analyzer), _analyze_disclosures(db, analyzer)
+
+
 def analyze_pending(
     db: Session, *, analyzer: Analyzer | None = None
 ) -> CollectionRun:
@@ -117,8 +126,7 @@ def analyze_pending(
     db.commit()
 
     try:
-        news_count = _analyze_news(db, analyzer)
-        disclosure_count = _analyze_disclosures(db, analyzer)
+        news_count, disclosure_count = analyze_targets(db, analyzer)
         run.status = "success"
         run.finished_at = utcnow()
         run.message = f"분석 완료: 뉴스 {news_count}건, 공시 {disclosure_count}건."

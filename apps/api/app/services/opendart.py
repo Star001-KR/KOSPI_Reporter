@@ -206,13 +206,33 @@ def _mark_run_failed(db: Session, run: CollectionRun, message: str) -> None:
     db.commit()
 
 
+def import_corp_codes(
+    db: Session, api_key: str, downloader: Callable[[str], bytes]
+) -> tuple[int, int, int]:
+    """Download and upsert the OpenDART corp code archive.
+
+    Returns ``(inserted, updated, total)``. Raises :class:`OpenDartError` for a
+    missing key, a download/extract failure, or an empty archive. Rows are
+    added to the session without committing.
+    """
+    if not api_key:
+        raise OpenDartError(
+            "OPENDART_API_KEY가 설정되지 않아 corp code import를 실행할 수 없습니다."
+        )
+    entries = parse_corp_code_xml(extract_corp_code_xml(downloader(api_key)))
+    if not entries:
+        raise OpenDartError("OpenDART corpCode 응답에서 corp code를 찾지 못했습니다.")
+    inserted, updated = upsert_corp_codes(db, entries)
+    return inserted, updated, len(entries)
+
+
 def run_corp_code_import(
     db: Session,
     *,
     api_key: str | None = None,
     downloader: Callable[[str], bytes] | None = None,
 ) -> CollectionRun:
-    """Run a corp code import and record it as a :class:`CollectionRun`.
+    """Run a standalone corp code import and record it as a CollectionRun.
 
     ``api_key`` defaults to the configured ``OPENDART_API_KEY``; pass an
     explicit value (including ``""``) to override it. ``downloader`` is
@@ -229,21 +249,13 @@ def run_corp_code_import(
     db.commit()
 
     try:
-        if not api_key:
-            raise OpenDartError(
-                "OPENDART_API_KEY가 설정되지 않아 corp code import를 실행할 수 없습니다."
-            )
-        xml_bytes = extract_corp_code_xml(downloader(api_key))
-        entries = parse_corp_code_xml(xml_bytes)
-        if not entries:
-            raise OpenDartError("OpenDART corpCode 응답에서 corp code를 찾지 못했습니다.")
-        inserted, updated = upsert_corp_codes(db, entries)
+        inserted, updated, total = import_corp_codes(db, api_key or "", downloader)
         run.status = "success"
-        run.symbols_processed = len(entries)
+        run.symbols_processed = total
         run.finished_at = utcnow()
         run.message = (
             f"corp code import 완료: 신규 {inserted}건, 갱신 {updated}건, "
-            f"전체 {len(entries)}건."
+            f"전체 {total}건."
         )
         db.commit()
     except OpenDartError as exc:
@@ -379,6 +391,7 @@ def store_disclosures(
             )
         )
         inserted += 1
+    db.flush()
     return inserted
 
 
@@ -398,6 +411,46 @@ def _run_summary(
     if failures:
         summary += f" 실패 {len(failures)}건 — " + "; ".join(failures)
     return summary
+
+
+def collect_disclosures_for_symbols(
+    db: Session,
+    symbols: list[Symbol],
+    *,
+    api_key: str,
+    fetcher: Callable[[str, str, str], list[dict]] | None = None,
+    lookback_days: int = _DISCLOSURE_LOOKBACK_DAYS,
+) -> tuple[int, int, list[str]]:
+    """Collect recent disclosures for the given symbols.
+
+    Returns ``(processed, inserted, failures)``. Raises :class:`OpenDartError`
+    only when collection cannot start (missing key); per-symbol problems are
+    returned in ``failures``. Rows are added to the session without committing.
+    """
+    if not api_key:
+        raise OpenDartError(
+            "OPENDART_API_KEY가 설정되지 않아 공시 수집을 실행할 수 없습니다."
+        )
+    active_fetcher = fetcher or _default_disclosure_fetcher(api_key)
+    today = date.today()
+    bgn_de = (today - timedelta(days=lookback_days)).strftime("%Y%m%d")
+    end_de = today.strftime("%Y%m%d")
+
+    processed = 0
+    inserted = 0
+    failures: list[str] = []
+    for symbol in symbols:
+        corp_code = resolve_corp_code(db, symbol.code)
+        if corp_code is None:
+            failures.append(f"{symbol.name}({symbol.code}): corp_code 미매핑")
+            continue
+        try:
+            raw = active_fetcher(corp_code, bgn_de, end_de)
+            inserted += store_disclosures(db, symbol.id, parse_disclosures(raw))
+            processed += 1
+        except OpenDartError as exc:
+            failures.append(f"{symbol.name}({symbol.code}): {exc}")
+    return processed, inserted, failures
 
 
 def collect_disclosures(
@@ -421,40 +474,20 @@ def collect_disclosures(
     db.commit()
 
     try:
-        if not api_key:
-            raise OpenDartError(
-                "OPENDART_API_KEY가 설정되지 않아 공시 수집을 실행할 수 없습니다."
-            )
-
-        active_fetcher = fetcher or _default_disclosure_fetcher(api_key)
         symbols = list(db.execute(select(Symbol)).scalars())
-        today = date.today()
-        bgn_de = (today - timedelta(days=lookback_days)).strftime("%Y%m%d")
-        end_de = today.strftime("%Y%m%d")
-
-        processed = 0
-        inserted_total = 0
-        failures: list[str] = []
-        for symbol in symbols:
-            corp_code = resolve_corp_code(db, symbol.code)
-            if corp_code is None:
-                failures.append(f"{symbol.name}({symbol.code}): corp_code 미매핑")
-                continue
-            try:
-                raw = active_fetcher(corp_code, bgn_de, end_de)
-                inserted_total += store_disclosures(
-                    db, symbol.id, parse_disclosures(raw)
-                )
-                processed += 1
-            except OpenDartError as exc:
-                failures.append(f"{symbol.name}({symbol.code}): {exc}")
-
+        processed, inserted, failures = collect_disclosures_for_symbols(
+            db,
+            symbols,
+            api_key=api_key or "",
+            fetcher=fetcher,
+            lookback_days=lookback_days,
+        )
         run.symbols_processed = processed
-        run.disclosures_inserted = inserted_total
+        run.disclosures_inserted = inserted
         run.finished_at = utcnow()
         run.status = "failed" if symbols and processed == 0 else "success"
         run.message = _run_summary(
-            "공시 수집", len(symbols), processed, inserted_total, failures
+            "공시 수집", len(symbols), processed, inserted, failures
         )
         db.commit()
     except OpenDartError as exc:

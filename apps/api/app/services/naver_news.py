@@ -173,6 +173,7 @@ def store_news(db: Session, symbol_id: int, drafts: Iterable[NewsDraft]) -> int:
             )
         )
         inserted += 1
+    db.flush()
     return inserted
 
 
@@ -201,6 +202,40 @@ def _default_news_fetcher(
     return fetch
 
 
+def collect_news_for_symbols(
+    db: Session,
+    symbols: list[Symbol],
+    *,
+    client_id: str,
+    client_secret: str,
+    fetcher: Callable[[str], list[dict]] | None = None,
+) -> tuple[int, int, list[str]]:
+    """Collect recent news for the given symbols.
+
+    Returns ``(processed, inserted, failures)``. Raises :class:`NaverNewsError`
+    only when collection cannot start (missing keys); per-symbol problems are
+    returned in ``failures``. Rows are added to the session without committing.
+    """
+    if not client_id or not client_secret:
+        raise NaverNewsError(
+            "NAVER_CLIENT_ID/NAVER_CLIENT_SECRET가 설정되지 않아 "
+            "뉴스 수집을 실행할 수 없습니다."
+        )
+    active_fetcher = fetcher or _default_news_fetcher(client_id, client_secret)
+
+    processed = 0
+    inserted = 0
+    failures: list[str] = []
+    for symbol in symbols:
+        try:
+            raw = active_fetcher(symbol.name)
+            inserted += store_news(db, symbol.id, parse_news(raw))
+            processed += 1
+        except NaverNewsError as exc:
+            failures.append(f"{symbol.name}({symbol.code}): {exc}")
+    return processed, inserted, failures
+
+
 def collect_news(
     db: Session,
     *,
@@ -224,32 +259,20 @@ def collect_news(
     db.commit()
 
     try:
-        if not client_id or not client_secret:
-            raise NaverNewsError(
-                "NAVER_CLIENT_ID/NAVER_CLIENT_SECRET가 설정되지 않아 "
-                "뉴스 수집을 실행할 수 없습니다."
-            )
-
-        active_fetcher = fetcher or _default_news_fetcher(client_id, client_secret)
         symbols = list(db.execute(select(Symbol)).scalars())
-
-        processed = 0
-        inserted_total = 0
-        failures: list[str] = []
-        for symbol in symbols:
-            try:
-                raw = active_fetcher(symbol.name)
-                inserted_total += store_news(db, symbol.id, parse_news(raw))
-                processed += 1
-            except NaverNewsError as exc:
-                failures.append(f"{symbol.name}({symbol.code}): {exc}")
-
+        processed, inserted, failures = collect_news_for_symbols(
+            db,
+            symbols,
+            client_id=client_id or "",
+            client_secret=client_secret or "",
+            fetcher=fetcher,
+        )
         run.symbols_processed = processed
-        run.news_inserted = inserted_total
+        run.news_inserted = inserted
         run.finished_at = utcnow()
         run.status = "failed" if symbols and processed == 0 else "success"
         run.message = _run_summary(
-            "뉴스 수집", len(symbols), processed, inserted_total, failures
+            "뉴스 수집", len(symbols), processed, inserted, failures
         )
         db.commit()
     except NaverNewsError as exc:

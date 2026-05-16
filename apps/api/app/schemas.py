@@ -250,3 +250,11 @@ class CollectionRunRead(BaseModel):
     news_inserted: int
     disclosures_inserted: int
     message: str | None = None
+
+
+class CollectionRunRequest(BaseModel):
+    symbol_ids: list[int] | None = None
+    import_corp_codes: bool = False
+    include_disclosures: bool = True
+    include_news: bool = True
+    analyze: bool = True

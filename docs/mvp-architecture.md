@@ -335,7 +335,7 @@ Verification:
 
 ### MVP-05 Collection Run Service And API
 
-Status: not-started
+Status: done
 
 Depends on: MVP-01, MVP-02, MVP-03, MVP-04
 
