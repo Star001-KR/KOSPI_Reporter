@@ -2058,15 +2058,16 @@ function FeedListItem({
       <span className={`s-rail s-rail--${issue.sentiment}`} />
       <span className="body">
         <span className="meta">
-          <span
-            className="feed-unread-dot"
-            data-unread={unread ? "true" : "false"}
-            aria-hidden="true"
-          />
           <MktChip market={issue.market} />
           <span className="feed-stock-name">{issue.stockName}</span>
-          <span>·</span>
-          <span>{sourceLabel}</span>
+          <span className="feed-item-source">
+            <span
+              className="feed-unread-dot"
+              data-unread={unread ? "true" : "false"}
+              aria-hidden="true"
+            />
+            <span className="feed-item-source-label">{sourceLabel}</span>
+          </span>
         </span>
         <span className="title">{issue.title}</span>
         <span className="badges">

@@ -1677,7 +1677,6 @@ a {
   flex: 1;
   flex-direction: column;
   min-width: 0;
-  padding-right: 64px;
 }
 
 .feed-item .meta {
@@ -1701,6 +1700,22 @@ a {
   font-weight: 600;
 }
 
+.feed-item-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  margin-left: auto;
+  max-width: 55%;
+}
+
+.feed-item-source-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .feed-item .when {
   font-family: var(--font-mono);
 }
@@ -1717,9 +1732,7 @@ a {
 }
 
 .feed-unread-dot {
-  position: absolute;
-  top: var(--sp-3);
-  right: var(--sp-4);
+  flex: 0 0 auto;
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -1728,11 +1741,11 @@ a {
 
 .feed-unread-dot[data-unread="true"] {
   background: var(--neg);
-  box-shadow: 0 0 0 2px var(--surface);
 }
 
 .feed-item .title {
   margin-top: 2px;
+  padding-right: 64px;
   color: var(--ink);
   font-size: var(--fs-14);
   line-height: 1.4;
@@ -1747,6 +1760,7 @@ a {
   align-items: center;
   gap: 5px;
   margin-top: 6px;
+  padding-right: 64px;
 }
 
 .cluster-badge {
