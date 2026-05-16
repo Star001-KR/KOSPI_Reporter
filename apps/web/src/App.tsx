@@ -11,6 +11,7 @@ import {
   GripVertical,
   Info,
   Lightbulb,
+  LogOut,
   Moon,
   Paperclip,
   Plus,
@@ -27,6 +28,7 @@ import { api } from "./api";
 import {
   loadReadIds,
   loadWatchlist,
+  removeWatchlistEntry,
   saveReadIds,
   saveWatchlist,
   upsertWatchlistEntry,
@@ -34,6 +36,7 @@ import {
 } from "./storage";
 import type {
   AnalysisResult,
+  AuthUser,
   DailyPrice,
   Sentiment,
   SymbolDetail,
@@ -42,7 +45,7 @@ import type {
 } from "./types";
 
 type ViewName = "dashboard" | "feed";
-type IssueType = "news" | "disc" | "rep";
+type IssueType = "news" | "disc";
 type SentKey = "pos" | "neg" | "neu";
 type MarketFilter = "all" | "KOSPI" | "KOSDAQ";
 
@@ -62,7 +65,6 @@ type ResearchStock = {
   unreadCount: number;
   newsCount: number;
   disclosureCount: number;
-  reportCount: number;
   latestCollectedAt: string | null;
   dominantSent: SentKey;
   spark: DailyPrice[];
@@ -274,8 +276,19 @@ function sentimentLabel(sentiment: SentKey): string {
 
 function typeLabel(type: IssueType): string {
   if (type === "news") return "NEWS";
-  if (type === "disc") return "공시";
-  return "리포트";
+  return "공시";
+}
+
+function naverResearchUrl(stock: Pick<ResearchStock, "code">): string {
+  const params = new URLSearchParams({
+    keyword: "",
+    brokerCode: "",
+    writeFromDate: "",
+    writeToDate: "",
+    searchType: "itemCode",
+    itemCode: stock.code,
+  });
+  return `https://finance.naver.com/research/company_list.naver?${params.toString()}`;
 }
 
 function analysisKeywords(analysis: AnalysisResult | null): string[] {
@@ -700,7 +713,6 @@ function buildStocks(
       unreadCount,
       newsCount,
       disclosureCount,
-      reportCount: 0,
       latestCollectedAt: latestCollectedFromDetail(detail),
       dominantSent,
       spark,
@@ -730,6 +742,9 @@ function App() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notifications, setNotifications] = useState<SystemNotification[]>([]);
   const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isBusy, setIsBusy] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(AUTO_REFRESH_SECONDS);
@@ -777,6 +792,28 @@ function App() {
   }, [theme]);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const loginError = params.get("auth_error");
+    if (loginError) {
+      setAuthError("Google 로그인에 실패했습니다. 잠시 후 다시 시도해 주세요.");
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (params.get("auth")) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
+    api
+      .getMe()
+      .then((user) => {
+        setAuthUser(user);
+        setAuthError(null);
+      })
+      .catch(() => {
+        setAuthUser(null);
+      })
+      .finally(() => setAuthLoading(false));
+  }, []);
+
+  useEffect(() => {
     const timer = window.setInterval(() => {
       setSecondsLeft((value) => (value <= 0 ? AUTO_REFRESH_SECONDS : value - 1));
     }, 1000);
@@ -815,6 +852,11 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!authUser) {
+      setIsLoading(false);
+      return;
+    }
+    setIsLoading(true);
     refresh()
       .catch((err: Error) =>
         pushNotification({
@@ -824,7 +866,7 @@ function App() {
         }),
       )
       .finally(() => setIsLoading(false));
-  }, [refresh, pushNotification]);
+  }, [refresh, pushNotification, authUser]);
 
   // Load real daily closes for each symbol once details arrive; a per-symbol
   // failure just yields an empty series so the rest of the dashboard is fine.
@@ -943,6 +985,17 @@ function App() {
     });
   }
 
+  async function handleLogout() {
+    await runAction(async () => {
+      await api.logout();
+      setAuthUser(null);
+      setNotifications([]);
+      setView("dashboard");
+    }, {
+      errorTitle: "로그아웃 실패",
+    });
+  }
+
   function goToFeed(stockCode?: string) {
     setFilter(stockCode ? { stockCode } : {});
     setSelectedIssueId(null);
@@ -968,7 +1021,31 @@ function App() {
     saveWatchlist(next);
   }
 
+  // Drop a card from the dashboard. The watchlist lives only in this browser,
+  // so removal just prunes localStorage; the shared public symbol is untouched.
+  function removeFromWatchlist(stock: ResearchStock) {
+    const next = removeWatchlistEntry(watchlist, {
+      market: stock.market,
+      code: stock.code,
+    });
+    setWatchlist(next);
+    saveWatchlist(next);
+    pushNotification({
+      tone: "info",
+      title: "종목 제거",
+      message: `${stock.name} 카드를 대시보드에서 제거했습니다.`,
+    });
+  }
+
   const watchlistEmpty = !isLoading && watchlist.length === 0;
+
+  if (authLoading) {
+    return <LoginGate mode="checking" error={authError} />;
+  }
+
+  if (!authUser) {
+    return <LoginGate mode="login" error={authError} />;
+  }
 
   return (
     <div className="app">
@@ -987,6 +1064,8 @@ function App() {
         onClearNotifications={clearNotifications}
         theme={theme}
         setTheme={setTheme}
+        user={authUser}
+        onLogout={handleLogout}
       />
 
       <main className="app-main">
@@ -1001,6 +1080,7 @@ function App() {
               refreshing={isBusy}
               onRefresh={handleRefreshCollection}
               onReorder={reorderWatchlist}
+              onRemove={removeFromWatchlist}
               onPlanetClick={(stock) => goToFeed(stock.code)}
             />
           )
@@ -1037,6 +1117,43 @@ function App() {
   );
 }
 
+function LoginGate({
+  mode,
+  error,
+}: {
+  mode: "checking" | "login";
+  error: string | null;
+}) {
+  const isChecking = mode === "checking";
+  return (
+    <div className="login-shell">
+      <section className="login-panel" aria-live="polite">
+        <div className="login-mark">k</div>
+        <div>
+          <p className="login-eyebrow">KOSPI Reporter</p>
+          <h1>{isChecking ? "로그인 상태 확인 중" : "로그인이 필요합니다"}</h1>
+          <p>
+            Google 계정으로 로그인하면 같은 브라우저에서 다시 접속할 때
+            로그인 상태가 유지됩니다.
+          </p>
+        </div>
+        {error && <div className="login-error">{error}</div>}
+        {isChecking ? (
+          <div className="login-loading">
+            <RefreshCw size={15} className="spin" />
+            세션 확인 중
+          </div>
+        ) : (
+          <a className="google-login-btn" href={api.googleLoginUrl()}>
+            <span className="google-g">G</span>
+            Google로 로그인
+          </a>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function AppBar({
   view,
   setView,
@@ -1052,6 +1169,8 @@ function AppBar({
   onClearNotifications,
   theme,
   setTheme,
+  user,
+  onLogout,
 }: {
   view: ViewName;
   setView: (view: ViewName) => void;
@@ -1067,7 +1186,11 @@ function AppBar({
   onClearNotifications: () => void;
   theme: "light" | "dark";
   setTheme: (theme: "light" | "dark") => void;
+  user: AuthUser;
+  onLogout: () => void;
 }) {
+  const userLabel = user.display_name || user.email || "로그인 사용자";
+  const avatarInitial = userLabel.trim().charAt(0).toUpperCase() || "U";
   return (
     <header className="app-bar">
       <button type="button" className="logo" onClick={() => setView("dashboard")}>
@@ -1109,6 +1232,17 @@ function AppBar({
         <Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={onAddStock}>
           종목 추가
         </Button>
+        <div className="account-pill" title={user.email ?? userLabel}>
+          {user.avatar_url ? (
+            <img src={user.avatar_url} alt="" />
+          ) : (
+            <span className="account-avatar-fallback">{avatarInitial}</span>
+          )}
+          <span>{userLabel}</span>
+        </div>
+        <IconButton title="로그아웃" onClick={onLogout}>
+          <LogOut size={17} />
+        </IconButton>
         <IconButton
           title={theme === "dark" ? "라이트 모드" : "다크 모드"}
           onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
@@ -1200,6 +1334,7 @@ function Dashboard({
   refreshing,
   onRefresh,
   onReorder,
+  onRemove,
   onPlanetClick,
 }: {
   stocks: ResearchStock[];
@@ -1208,6 +1343,7 @@ function Dashboard({
   refreshing: boolean;
   onRefresh: () => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
+  onRemove: (stock: ResearchStock) => void;
   onPlanetClick: (stock: ResearchStock) => void;
 }) {
   return (
@@ -1220,7 +1356,12 @@ function Dashboard({
         onRefresh={onRefresh}
         onPlanetClick={onPlanetClick}
       />
-      <HoldingsPane stocks={stocks} onOpen={onPlanetClick} onReorder={onReorder} />
+      <HoldingsPane
+        stocks={stocks}
+        onOpen={onPlanetClick}
+        onReorder={onReorder}
+        onRemove={onRemove}
+      />
     </div>
   );
 }
@@ -1344,10 +1485,12 @@ function HoldingsPane({
   stocks,
   onOpen,
   onReorder,
+  onRemove,
 }: {
   stocks: ResearchStock[];
   onOpen: (stock: ResearchStock) => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
+  onRemove: (stock: ResearchStock) => void;
 }) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
@@ -1399,6 +1542,7 @@ function HoldingsPane({
               overIndex === index && dragIndex !== null && dragIndex !== index
             }
             onOpen={() => onOpen(stock)}
+            onRemove={() => onRemove(stock)}
             onDragStart={() => setDragIndex(index)}
             onDragEnterCard={() => setOverIndex(index)}
             onDropCard={() => {
@@ -1419,6 +1563,7 @@ function StockCard({
   dragging,
   dropTarget,
   onOpen,
+  onRemove,
   onDragStart,
   onDragEnterCard,
   onDropCard,
@@ -1429,24 +1574,35 @@ function StockCard({
   dragging: boolean;
   dropTarget: boolean;
   onOpen: () => void;
+  onRemove: () => void;
   onDragStart: () => void;
   onDragEnterCard: () => void;
   onDropCard: () => void;
   onDragEnd: () => void;
 }) {
-  const cardRef = useRef<HTMLButtonElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [confirming, setConfirming] = useState(false);
   const up = stock.changePct >= 0;
   const hasChange = stock.spark.length > 1;
   const hasValuation =
     stock.quantity !== null && stock.averageCost !== null && stock.spark.length > 0;
   return (
-    <button
+    <div
       ref={cardRef}
-      type="button"
+      role="button"
+      tabIndex={0}
       className="stock-card"
       data-dragging={dragging ? "true" : undefined}
       data-drop-target={dropTarget ? "true" : undefined}
       onClick={onOpen}
+      onMouseLeave={() => setConfirming(false)}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen();
+        }
+      }}
       onDragEnter={(event) => {
         event.preventDefault();
         onDragEnterCard();
@@ -1482,6 +1638,31 @@ function StockCard({
         <span className="name">{stock.name}</span>
         <span className="spacer" />
         <MktChip market={stock.market} />
+        <a
+          className="stock-card-report-link"
+          href={naverResearchUrl(stock)}
+          target="_blank"
+          rel="noreferrer"
+          title={`${stock.name} 네이버 리포트`}
+          aria-label={`${stock.name} 네이버 리포트 새 탭으로 열기`}
+          onClick={(event) => event.stopPropagation()}
+          onDragStart={(event) => event.preventDefault()}
+        >
+          <FileText size={14} />
+        </a>
+        <button
+          type="button"
+          className={`card-remove${confirming ? " card-remove--armed" : ""}`}
+          aria-label={confirming ? `${stock.name} 제거 확인` : `${stock.name} 카드 제거`}
+          title={confirming ? "한 번 더 누르면 제거돼요" : "카드 제거"}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (confirming) onRemove();
+            else setConfirming(true);
+          }}
+        >
+          {confirming ? "삭제" : <X size={13} />}
+        </button>
       </div>
       <div className="row stock-price-row">
         <span className="price">{formatMoney(stock.price)}</span>
@@ -1506,7 +1687,7 @@ function StockCard({
           <span className="pl pl--muted">-</span>
         )}
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -1600,7 +1781,7 @@ function Planet({
       onFocus={() => onHover(stock.code)}
       onBlur={() => onHover(null)}
       onClick={() => onClick(stock)}
-      aria-label={`${stock.name}: 뉴스 ${stock.newsCount}, 공시 ${stock.disclosureCount}, 리포트 ${stock.reportCount}`}
+      aria-label={`${stock.name}: 뉴스 ${stock.newsCount}, 공시 ${stock.disclosureCount}`}
     >
       <span
         className="planet-disc"
@@ -1618,9 +1799,6 @@ function Planet({
           </span>
           <span>
             <span className="ttkey">공시</span> <b>{stock.disclosureCount}</b>
-          </span>
-          <span>
-            <span className="ttkey">리포트</span> <b>{stock.reportCount}</b>
           </span>
         </span>
       )}
@@ -1735,7 +1913,6 @@ function FeedFilters({
     { value: "all", label: "전체" },
     { value: "news", label: "뉴스" },
     { value: "disc", label: "공시" },
-    { value: "rep", label: "리포트" },
   ];
   const sentiments: Array<{ value: SentKey | "all"; label: string }> = [
     { value: "all", label: "감성 전체" },
@@ -1852,8 +2029,6 @@ function FeedListItem({
           <MktChip market={issue.market} />
           <span className="feed-stock-name">{issue.stockName}</span>
           <span>·</span>
-          <span className="when">{formatTime(issue.occurredAt)}</span>
-          <span>·</span>
           <span>{sourceLabel}</span>
         </span>
         <span className="title">{issue.title}</span>
@@ -1863,6 +2038,7 @@ function FeedListItem({
           <ImportanceDots value={issue.importance} />
         </span>
       </span>
+      <span className="feed-item-time">{formatTime(issue.occurredAt)}</span>
     </button>
   );
 }

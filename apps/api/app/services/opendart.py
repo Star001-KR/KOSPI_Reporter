@@ -29,6 +29,7 @@ from kospi_core import DisclosureDraft
 
 from app.config import get_settings
 from app.models import CollectionRun, DartCorpCode, Disclosure, Symbol, utcnow
+from app.services.symbol_catalog import collection_identity
 
 CORP_CODE_URL = "https://opendart.fss.or.kr/api/corpCode.xml"
 OPENDART_LIST_URL = "https://opendart.fss.or.kr/api/list.json"
@@ -440,7 +441,10 @@ def collect_disclosures_for_symbols(
     inserted = 0
     failures: list[str] = []
     for symbol in symbols:
-        corp_code = resolve_corp_code(db, symbol.code)
+        # Preferred stocks have no disclosures of their own — resolve the
+        # common stock's corp_code instead (삼성전자우 → 삼성전자).
+        lookup_code, _ = collection_identity(symbol.code, symbol.name)
+        corp_code = resolve_corp_code(db, lookup_code)
         if corp_code is None:
             failures.append(f"{symbol.name}({symbol.code}): corp_code 미매핑")
             continue

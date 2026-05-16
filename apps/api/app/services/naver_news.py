@@ -26,6 +26,7 @@ from kospi_core import NewsDraft
 
 from app.config import get_settings
 from app.models import CollectionRun, NewsItem, Symbol, utcnow
+from app.services.symbol_catalog import collection_identity
 
 NAVER_NEWS_URL = "https://openapi.naver.com/v1/search/news.json"
 NEWS_RUN_TYPE = "news_collection"
@@ -228,7 +229,10 @@ def collect_news_for_symbols(
     failures: list[str] = []
     for symbol in symbols:
         try:
-            raw = active_fetcher(symbol.name)
+            # Preferred stocks have no news of their own — search the common
+            # stock's name instead (삼성전자우 → 삼성전자).
+            _, query = collection_identity(symbol.code, symbol.name)
+            raw = active_fetcher(query)
             inserted += store_news(db, symbol.id, parse_news(raw))
             processed += 1
         except NaverNewsError as exc:

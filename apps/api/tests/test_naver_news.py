@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -17,6 +18,7 @@ from app.services.naver_news import (
     parse_news,
     store_news,
 )
+from app.services.symbol_catalog import ListedSymbol
 
 SAMPLE_NEWS_ITEMS = [
     {
@@ -134,6 +136,28 @@ class NewsCollectionTests(unittest.TestCase):
             .all()
         )
         self.assertEqual(len(stored), 2)
+
+    def test_collect_news_redirects_preferred_to_common(self) -> None:
+        # 삼성전자우 is registered, but its news comes from the common stock.
+        self._seed_symbol(code="005935", name="삼성전자우")
+        captured: dict[str, str] = {}
+
+        def fake_fetcher(query: str) -> list[dict]:
+            captured["query"] = query
+            return SAMPLE_NEWS_ITEMS
+
+        runtime = (
+            ListedSymbol("KOSPI", "005930", "삼성전자"),
+            ListedSymbol("KOSPI", "005935", "삼성전자우"),
+        )
+        with patch(
+            "app.services.symbol_catalog.listed_symbols", return_value=runtime
+        ):
+            run = collect_news(
+                self.db, client_id="id", client_secret="secret", fetcher=fake_fetcher
+            )
+        self.assertEqual(run.status, "success")
+        self.assertEqual(captured["query"], "삼성전자")
 
     def test_collect_news_is_idempotent(self) -> None:
         self._seed_symbol()
