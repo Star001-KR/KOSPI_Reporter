@@ -21,15 +21,15 @@ import {
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
-import { api, SymbolPayload } from "./api";
+import { api } from "./api";
+import { loadWatchlist, saveWatchlist, upsertWatchlistEntry } from "./storage";
 import type {
   AnalysisResult,
   CollectionRun,
-  PortfolioBrief,
   Sentiment,
   SymbolDetail,
   SymbolLookupResult,
-  SymbolRecord,
+  WatchlistEntry,
 } from "./types";
 
 type ViewName = "dashboard" | "feed";
@@ -260,22 +260,33 @@ function buildIssues(details: SymbolDetail[]): ResearchIssue[] {
   );
 }
 
+function latestCollectedFromDetail(detail: SymbolDetail | undefined): string | null {
+  if (!detail) return null;
+  const stamps = [
+    ...detail.news_items.map((entry) => entry.item.collected_at),
+    ...detail.disclosures.map((entry) => entry.item.collected_at),
+  ];
+  if (!stamps.length) return null;
+  return stamps.reduce((latest, value) => (value > latest ? value : latest));
+}
+
 function buildStocks(
-  symbols: SymbolRecord[],
-  brief: PortfolioBrief | null,
+  watchlist: WatchlistEntry[],
+  details: SymbolDetail[],
   issues: ResearchIssue[],
 ): ResearchStock[] {
-  const briefById = new Map(brief?.positions.map((position) => [position.symbol.id, position]));
-  return symbols.map((symbol) => {
-    const position = briefById.get(symbol.id);
-    const quantity = symbol.holding?.quantity ?? null;
-    const averageCost = symbol.holding?.average_cost ?? null;
-    const marketValue = symbol.holding?.market_value ?? 0;
-    const price = quantity && quantity > 0 ? marketValue / quantity : averageCost ?? marketValue;
-    const cost = quantity && averageCost ? quantity * averageCost : marketValue;
-    const profitLoss = marketValue - cost;
-    const profitLossPct = cost > 0 ? (profitLoss / cost) * 100 : 0;
-    const stockIssues = issues.filter((issue) => issue.stockId === symbol.id);
+  const detailByKey = new Map(
+    details.map((detail) => [`${detail.market}:${detail.code}`, detail]),
+  );
+  return watchlist.map((entry, index) => {
+    const detail = detailByKey.get(`${entry.market}:${entry.code}`);
+    const id = detail?.id ?? -(index + 1);
+    const quantity = entry.quantity;
+    const averageCost = entry.averageCost;
+    // Holdings are cost-basis only; live prices are out of scope for the MVP.
+    const marketValue = quantity && averageCost ? quantity * averageCost : 0;
+    const price = averageCost ?? 0;
+    const stockIssues = issues.filter((issue) => issue.stockId === id);
     const sentimentCounts = stockIssues.reduce(
       (acc, issue) => ({ ...acc, [issue.sentiment]: acc[issue.sentiment] + 1 }),
       { pos: 0, neg: 0, neu: 0 } satisfies Record<SentKey, number>,
@@ -286,57 +297,45 @@ function buildStocks(
         : sentimentCounts.neg > sentimentCounts.pos && sentimentCounts.neg >= sentimentCounts.neu
           ? "neg"
           : "neu";
-    const newsCount = position?.news_count ?? stockIssues.filter((issue) => issue.type === "news").length;
-    const disclosureCount =
-      position?.disclosure_count ?? stockIssues.filter((issue) => issue.type === "disc").length;
+    const newsCount = detail?.news_items.length ?? 0;
+    const disclosureCount = detail?.disclosures.length ?? 0;
     return {
-      id: symbol.id,
-      code: symbol.code,
-      name: symbol.name,
-      market: symbol.market,
+      id,
+      code: entry.code,
+      name: entry.name,
+      market: entry.market,
       quantity,
       averageCost,
       marketValue,
       price,
-      changePct: profitLossPct,
-      profitLoss,
-      profitLossPct,
+      changePct: 0,
+      profitLoss: 0,
+      profitLossPct: 0,
       issueCount: newsCount + disclosureCount,
       newsCount,
       disclosureCount,
       reportCount: 0,
-      latestCollectedAt: position?.latest_collected_at ?? null,
+      latestCollectedAt: latestCollectedFromDetail(detail),
       dominantSent,
-      spark: pseudoSparkline(symbol.code, price, profitLoss),
+      spark: pseudoSparkline(entry.code, price, 0),
     };
   });
 }
 
-function payloadFromRegistration(state: RegisterState): SymbolPayload {
-  const quantity = numberOrNull(state.quantity);
-  const averageCost = numberOrNull(state.averageCost);
-  const marketValue = quantity && averageCost ? quantity * averageCost : null;
-  const hasHolding = [quantity, averageCost, marketValue].some((value) => value !== null);
+function watchlistEntryFromRegistration(state: RegisterState): WatchlistEntry {
   return {
     market: state.selected?.market ?? "KOSPI",
     code: state.selected?.code ?? state.query,
     name: state.selected?.name ?? "",
+    quantity: numberOrNull(state.quantity),
+    averageCost: numberOrNull(state.averageCost),
     memo: state.memo.trim() || null,
-    holding: hasHolding
-      ? {
-          quantity,
-          average_cost: averageCost,
-          market_value: marketValue,
-          portfolio_weight: null,
-        }
-      : null,
   };
 }
 
 function App() {
   const [view, setView] = useState<ViewName>("dashboard");
-  const [symbols, setSymbols] = useState<SymbolRecord[]>([]);
-  const [brief, setBrief] = useState<PortfolioBrief | null>(null);
+  const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
   const [details, setDetails] = useState<SymbolDetail[]>([]);
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
   const [filter, setFilter] = useState<FeedFilter>({});
@@ -367,15 +366,24 @@ function App() {
   }, [secondsLeft]);
 
   const issues = useMemo(() => buildIssues(details), [details]);
-  const stocks = useMemo(() => buildStocks(symbols, brief, issues), [symbols, brief, issues]);
-  const registeredCodes = useMemo(() => symbols.map((symbol) => symbol.code), [symbols]);
+  const stocks = useMemo(
+    () => buildStocks(watchlist, details, issues),
+    [watchlist, details, issues],
+  );
+  const registeredCodes = useMemo(
+    () => watchlist.map((entry) => entry.code),
+    [watchlist],
+  );
 
   const refresh = useCallback(async () => {
-    const [nextBrief, nextSymbols] = await Promise.all([api.getBrief(), api.listSymbols()]);
-    const nextDetails = await Promise.all(nextSymbols.map((symbol) => api.getSymbol(symbol.id)));
-    setBrief(nextBrief);
-    setSymbols(nextSymbols);
+    // The server holds the shared public collection universe; the personal
+    // watchlist and holdings come from this browser only.
+    const serverSymbols = await api.listSymbols();
+    const nextDetails = await Promise.all(
+      serverSymbols.map((symbol) => api.getSymbol(symbol.id)),
+    );
     setDetails(nextDetails);
+    setWatchlist(loadWatchlist());
   }, []);
 
   useEffect(() => {
@@ -417,7 +425,21 @@ function App() {
 
   async function handleRegister(state: RegisterState) {
     await runAction(async () => {
-      await api.createSymbol(payloadFromRegistration(state));
+      const entry = watchlistEntryFromRegistration(state);
+      saveWatchlist(upsertWatchlistEntry(loadWatchlist(), entry));
+      // Register the symbol as a public collection target — identity only, no
+      // holdings ever leave the browser. A 409 means it already exists.
+      try {
+        await api.createSymbol({
+          market: entry.market,
+          code: entry.code,
+          name: entry.name,
+          memo: null,
+          holding: null,
+        });
+      } catch {
+        // Symbol already in the shared public universe — nothing to do.
+      }
       await refresh();
       setView("dashboard");
     });
@@ -429,7 +451,7 @@ function App() {
     setView("feed");
   }
 
-  const isEmpty = !isLoading && symbols.length === 0;
+  const watchlistEmpty = !isLoading && watchlist.length === 0;
 
   return (
     <div className="app">
@@ -451,18 +473,19 @@ function App() {
           error={error}
           lastRun={lastRun}
         />
-        {isEmpty ? (
-          <EmptyState onAddStock={() => setModalOpen(true)} />
-        ) : view === "dashboard" ? (
-          <Dashboard
-            stocks={stocks}
-            issues={issues}
-            brief={brief}
-            countdown={countdown}
-            refreshing={isBusy}
-            onRefresh={handleRefreshCollection}
-            onPlanetClick={(stock) => goToFeed(stock.code)}
-          />
+        {view === "dashboard" ? (
+          watchlistEmpty ? (
+            <EmptyState onAddStock={() => setModalOpen(true)} />
+          ) : (
+            <Dashboard
+              stocks={stocks}
+              issues={issues}
+              countdown={countdown}
+              refreshing={isBusy}
+              onRefresh={handleRefreshCollection}
+              onPlanetClick={(stock) => goToFeed(stock.code)}
+            />
+          )
         ) : (
           <Feed
             stocks={stocks}
@@ -580,7 +603,6 @@ function StatusLine({
 function Dashboard({
   stocks,
   issues,
-  brief,
   countdown,
   refreshing,
   onRefresh,
@@ -588,7 +610,6 @@ function Dashboard({
 }: {
   stocks: ResearchStock[];
   issues: ResearchIssue[];
-  brief: PortfolioBrief | null;
   countdown: string;
   refreshing: boolean;
   onRefresh: () => void;
@@ -599,13 +620,12 @@ function Dashboard({
       <CollectionPane
         stocks={stocks}
         issues={issues}
-        brief={brief}
         countdown={countdown}
         refreshing={refreshing}
         onRefresh={onRefresh}
         onPlanetClick={onPlanetClick}
       />
-      <HoldingsPane stocks={stocks} brief={brief} onOpen={onPlanetClick} />
+      <HoldingsPane stocks={stocks} onOpen={onPlanetClick} />
     </div>
   );
 }
@@ -613,7 +633,6 @@ function Dashboard({
 function CollectionPane({
   stocks,
   issues,
-  brief,
   countdown,
   refreshing,
   onRefresh,
@@ -621,7 +640,6 @@ function CollectionPane({
 }: {
   stocks: ResearchStock[];
   issues: ResearchIssue[];
-  brief: PortfolioBrief | null;
   countdown: string;
   refreshing: boolean;
   onRefresh: () => void;
@@ -630,11 +648,16 @@ function CollectionPane({
   const recent = issues[0] ?? null;
   const recentStock = recent ? stocks.find((stock) => stock.code === recent.stockCode) : null;
   const totalNew = stocks.reduce((sum, stock) => sum + stock.issueCount, 0);
+  const lastCollected = issues.reduce<string | null>(
+    (latest, issue) =>
+      !latest || issue.collectedAt > latest ? issue.collectedAt : latest,
+    null,
+  );
   return (
     <section className="dash-pane dash-pane--left">
       <div className="dash-pane-head">
         <h2>수집 · 자료</h2>
-        <span className="meta">마지막 {formatDate(brief?.latest_collected_at ?? null)} · 자동 5분</span>
+        <span className="meta">마지막 {formatDate(lastCollected)} · 자동 5분</span>
       </div>
       <Orbital
         stocks={stocks}
@@ -647,7 +670,7 @@ function CollectionPane({
         <span>
           <b>{totalNew}건</b> 새 정보
         </span>
-        <span>오늘 수집 {Math.max(brief?.latest_items.length ?? 0, issues.length)}건 · 실패 0</span>
+        <span>수집 항목 {issues.length}건</span>
       </div>
       {recent && recentStock && (
         <button className="recent-arrival" onClick={() => onPlanetClick(recentStock)}>
@@ -664,14 +687,12 @@ function CollectionPane({
 
 function HoldingsPane({
   stocks,
-  brief,
   onOpen,
 }: {
   stocks: ResearchStock[];
-  brief: PortfolioBrief | null;
   onOpen: (stock: ResearchStock) => void;
 }) {
-  const totalMarketValue = brief?.total_market_value ?? stocks.reduce((sum, stock) => sum + stock.marketValue, 0);
+  const totalMarketValue = stocks.reduce((sum, stock) => sum + stock.marketValue, 0);
   const totalCost = stocks.reduce((sum, stock) => {
     if (!stock.quantity || !stock.averageCost) return sum + stock.marketValue;
     return sum + stock.quantity * stock.averageCost;
@@ -885,7 +906,6 @@ function Feed({
       }),
     [issues, filter],
   );
-  const stockMap = useMemo(() => new Map(stocks.map((stock) => [stock.code, stock])), [stocks]);
   const selected = visible.find((issue) => issue.id === selectedIssueId) ?? visible[0] ?? null;
 
   useEffect(() => {
@@ -916,7 +936,7 @@ function Feed({
             />
           ))}
         </div>
-        <FeedReadingPane issue={selected} stock={selected ? stockMap.get(selected.stockCode) ?? null : null} />
+        <FeedReadingPane issue={selected} />
       </div>
     </div>
   );
@@ -1038,8 +1058,8 @@ function FeedListItem({
   );
 }
 
-function FeedReadingPane({ issue, stock }: { issue: ResearchIssue | null; stock: ResearchStock | null }) {
-  if (!issue || !stock) {
+function FeedReadingPane({ issue }: { issue: ResearchIssue | null }) {
+  if (!issue) {
     return (
       <div className="feed-pane">
         <div className="feed-pane-empty">
@@ -1055,9 +1075,9 @@ function FeedReadingPane({ issue, stock }: { issue: ResearchIssue | null; stock:
       <article className="feed-article">
         <div className="meta-line">
           <TypeBadge type={issue.type} />
-          <MktChip market={stock.market} />
+          <MktChip market={issue.market} />
           <span>
-            <b>{stock.name}</b> · {stock.code}
+            <b>{issue.stockName}</b> · {issue.stockCode}
           </span>
           <span>·</span>
           <span>{issue.source}</span>

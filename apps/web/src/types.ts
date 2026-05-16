@@ -122,3 +122,16 @@ export interface CollectionRun {
   disclosures_inserted: number;
   message: string | null;
 }
+
+/**
+ * A symbol the visitor is tracking. Stored only in the browser (localStorage),
+ * never on the server, so each visitor's watchlist and holdings stay private.
+ */
+export interface WatchlistEntry {
+  market: string;
+  code: string;
+  name: string;
+  quantity: number | null;
+  averageCost: number | null;
+  memo: string | null;
+}

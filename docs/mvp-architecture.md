@@ -441,7 +441,7 @@ Verification:
 
 ### MVP-09 Public User Data Boundary
 
-Status: not-started
+Status: done
 
 Depends on: MVP-06
 
