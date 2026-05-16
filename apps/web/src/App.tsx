@@ -1668,7 +1668,6 @@ function StockCard({
         </span>
         <span className="name">{stock.name}</span>
         <span className="spacer" />
-        <MktChip market={stock.market} />
         <a
           className="stock-card-report-link"
           href={naverResearchUrl(stock)}
@@ -1681,20 +1680,21 @@ function StockCard({
         >
           <FileText size={14} />
         </a>
-        <button
-          type="button"
-          className={`card-remove${confirming ? " card-remove--armed" : ""}`}
-          aria-label={confirming ? `${stock.name} 제거 확인` : `${stock.name} 카드 제거`}
-          title={confirming ? "한 번 더 누르면 제거돼요" : "카드 제거"}
-          onClick={(event) => {
-            event.stopPropagation();
-            if (confirming) onRemove();
-            else setConfirming(true);
-          }}
-        >
-          {confirming ? "삭제" : <X size={13} />}
-        </button>
+        <MktChip market={stock.market} />
       </div>
+      <button
+        type="button"
+        className={`card-remove${confirming ? " card-remove--armed" : ""}`}
+        aria-label={confirming ? `${stock.name} 제거 확인` : `${stock.name} 카드 제거`}
+        title={confirming ? "한 번 더 누르면 제거돼요" : "카드 제거"}
+        onClick={(event) => {
+          event.stopPropagation();
+          if (confirming) onRemove();
+          else setConfirming(true);
+        }}
+      >
+        {confirming ? "삭제" : <X size={11} />}
+      </button>
       <div className="row stock-price-row">
         <span className="price">{formatMoney(stock.price)}</span>
         {hasChange ? (
