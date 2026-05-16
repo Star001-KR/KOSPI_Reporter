@@ -1,6 +1,7 @@
 import {
   ArrowRight,
   ArrowUpRight,
+  Bell,
   Bookmark,
   Check,
   ChevronDown,
@@ -30,7 +31,6 @@ import {
 } from "./storage";
 import type {
   AnalysisResult,
-  CollectionRun,
   Sentiment,
   SymbolDetail,
   SymbolLookupResult,
@@ -90,10 +90,20 @@ type ResearchIssue = {
 
 type RelatedArticle = {
   id: string;
+  itemId: number;
   title: string;
   source: string;
   url: string;
   occurredAt: string | null;
+  collectedAt: string;
+  sentiment: SentKey;
+  importance: number;
+  summary: string;
+  impact: string;
+  rationale: string;
+  keywords: string[];
+  modelVersion: string;
+  isRepresentative: boolean;
 };
 
 type FeedFilter = {
@@ -101,6 +111,23 @@ type FeedFilter = {
   type?: IssueType | null;
   sentiment?: SentKey | null;
   minImportance?: number;
+};
+
+type NotificationTone = "info" | "success" | "error";
+
+type SystemNotification = {
+  id: string;
+  tone: NotificationTone;
+  title: string;
+  message: string;
+  createdAt: string;
+  read: boolean;
+};
+
+type NotificationInput = {
+  tone: NotificationTone;
+  title: string;
+  message: string;
 };
 
 type RegisterState = {
@@ -160,6 +187,9 @@ const NEWS_TERM_ALIASES: Array<{ term: string; pattern: RegExp }> = [
 
 const NEWS_STRONG_EVENT_TERMS = new Set(["사과", "노사", "교섭", "귀국", "교체", "계약", "규제"]);
 
+// Dashboard countdown cadence; mirror the worker's COLLECTION_INTERVAL_SECONDS.
+const AUTO_REFRESH_SECONDS = 600;
+
 const orbitConfigs = [
   { r: 205, start: 138, period: 118 },
   { r: 140, start: 250, period: 96 },
@@ -191,6 +221,15 @@ function formatDate(value: string | null): string {
 function formatTime(value: string | null): string {
   if (!value) return "-";
   return new Intl.DateTimeFormat("ko-KR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function formatNotificationStamp(value: string): string {
+  return new Intl.DateTimeFormat("ko-KR", {
+    month: "2-digit",
+    day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
@@ -385,13 +424,23 @@ function shouldClusterNews(a: ResearchIssue, b: ResearchIssue): boolean {
   return shared >= NEWS_MIN_SHARED_TERMS && similarity >= NEWS_SIMILARITY_THRESHOLD;
 }
 
-function relatedArticleFromIssue(issue: ResearchIssue): RelatedArticle {
+function relatedArticleFromIssue(issue: ResearchIssue, isRepresentative = false): RelatedArticle {
   return {
     id: issue.id,
+    itemId: issue.itemId,
     title: issue.title,
     source: issue.source,
     url: issue.url,
     occurredAt: issue.occurredAt,
+    collectedAt: issue.collectedAt,
+    sentiment: issue.sentiment,
+    importance: issue.importance,
+    summary: issue.summary,
+    impact: issue.impact,
+    rationale: issue.rationale,
+    keywords: issue.keywords,
+    modelVersion: issue.modelVersion,
+    isRepresentative,
   };
 }
 
@@ -462,14 +511,14 @@ function buildClusterIssue(cluster: ResearchIssue[]): ResearchIssue {
       ...issue,
       clusterSize: 1,
       clusterSources: uniqueValues([issue.source]),
-      relatedArticles: [relatedArticleFromIssue(issue)],
+      relatedArticles: [relatedArticleFromIssue(issue, true)],
     };
   }
 
   const sorted = [...cluster].sort((a, b) => issueTime(b) - issueTime(a));
   const representative = pickRepresentative(sorted);
   const clusterSources = uniqueValues(sorted.map((issue) => issue.source));
-  const relatedArticles = sorted.map(relatedArticleFromIssue);
+  const relatedArticles = sorted.map((issue) => relatedArticleFromIssue(issue, issue.id === representative.id));
   const clusterId = hashString(sorted.map((issue) => issue.id).sort().join("|"));
 
   return {
@@ -536,7 +585,7 @@ function buildIssues(details: SymbolDetail[]): ResearchIssue[] {
         clusterSources: [item.source ?? "News"],
         relatedArticles: [],
       };
-      return { ...issue, relatedArticles: [relatedArticleFromIssue(issue)] };
+      return { ...issue, relatedArticles: [relatedArticleFromIssue(issue, true)] };
     });
     const disclosures = detail.disclosures.map(({ item, analysis }) => {
       const issue: ResearchIssue = {
@@ -563,7 +612,7 @@ function buildIssues(details: SymbolDetail[]): ResearchIssue[] {
         clusterSources: ["DART"],
         relatedArticles: [],
       };
-      return { ...issue, relatedArticles: [relatedArticleFromIssue(issue)] };
+      return { ...issue, relatedArticles: [relatedArticleFromIssue(issue, true)] };
     });
     return [...news, ...disclosures];
   });
@@ -651,12 +700,38 @@ function App() {
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
   const [filter, setFilter] = useState<FeedFilter>({});
   const [modalOpen, setModalOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notifications, setNotifications] = useState<SystemNotification[]>([]);
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [isLoading, setIsLoading] = useState(true);
   const [isBusy, setIsBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [lastRun, setLastRun] = useState<CollectionRun | null>(null);
-  const [secondsLeft, setSecondsLeft] = useState(272);
+  const [secondsLeft, setSecondsLeft] = useState(AUTO_REFRESH_SECONDS);
+
+  const pushNotification = useCallback((input: NotificationInput) => {
+    const createdAt = new Date().toISOString();
+    const id = `${createdAt}-${Math.random().toString(36).slice(2, 8)}`;
+    setNotifications((items) => [
+      { ...input, id, createdAt, read: false },
+      ...items,
+    ].slice(0, 30));
+  }, []);
+
+  const unreadNotificationCount = useMemo(
+    () => notifications.filter((notification) => !notification.read).length,
+    [notifications],
+  );
+
+  function toggleNotifications() {
+    const nextOpen = !notificationsOpen;
+    setNotificationsOpen(nextOpen);
+    if (nextOpen) {
+      setNotifications((items) => items.map((item) => ({ ...item, read: true })));
+    }
+  }
+
+  function clearNotifications() {
+    setNotifications([]);
+  }
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -665,7 +740,7 @@ function App() {
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      setSecondsLeft((value) => (value <= 0 ? 300 : value - 1));
+      setSecondsLeft((value) => (value <= 0 ? AUTO_REFRESH_SECONDS : value - 1));
     }, 1000);
     return () => window.clearInterval(timer);
   }, []);
@@ -703,9 +778,15 @@ function App() {
 
   useEffect(() => {
     refresh()
-      .catch((err: Error) => setError(err.message))
+      .catch((err: Error) =>
+        pushNotification({
+          tone: "error",
+          title: "초기 데이터 로드 실패",
+          message: err.message,
+        }),
+      )
       .finally(() => setIsLoading(false));
-  }, [refresh]);
+  }, [refresh, pushNotification]);
 
   useEffect(() => {
     if (!issues.length && selectedIssueId) {
@@ -720,14 +801,25 @@ function App() {
     }
   }, [issues, selectedIssueId]);
 
-  async function runAction(action: () => Promise<void>) {
+  async function runAction(
+    action: () => Promise<void>,
+    options?: {
+      start?: NotificationInput;
+      errorTitle?: string;
+    },
+  ) {
     setIsBusy(true);
-    setError(null);
-    setLastRun(null);
+    if (options?.start) {
+      pushNotification(options.start);
+    }
     try {
       await action();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "작업에 실패했습니다.");
+      pushNotification({
+        tone: "error",
+        title: options?.errorTitle ?? "작업 실패",
+        message: err instanceof Error ? err.message : "작업에 실패했습니다.",
+      });
     } finally {
       setIsBusy(false);
     }
@@ -736,9 +828,28 @@ function App() {
   async function handleRefreshCollection() {
     await runAction(async () => {
       const run = await api.runCollection();
-      setLastRun(run);
       await refresh();
-      setSecondsLeft(300);
+      setSecondsLeft(AUTO_REFRESH_SECONDS);
+      if (run.status === "failed") {
+        pushNotification({
+          tone: "error",
+          title: "수집 실패",
+          message: run.message ?? "원인을 확인할 수 없습니다.",
+        });
+        return;
+      }
+      pushNotification({
+        tone: "success",
+        title: "수집 완료",
+        message: `공시 ${run.disclosures_inserted}건 · 뉴스 ${run.news_inserted}건을 업데이트했습니다.`,
+      });
+    }, {
+      start: {
+        tone: "info",
+        title: "수집 시작",
+        message: "등록된 종목의 뉴스와 공시를 최신화하고 있습니다.",
+      },
+      errorTitle: "수집 실패",
     });
   }
 
@@ -761,6 +872,13 @@ function App() {
       }
       await refresh();
       setView("dashboard");
+      pushNotification({
+        tone: "success",
+        title: "종목 추가 완료",
+        message: `${entry.name} 종목이 대시보드에 추가되었습니다.`,
+      });
+    }, {
+      errorTitle: "종목 추가 실패",
     });
   }
 
@@ -781,17 +899,17 @@ function App() {
         refreshing={isBusy}
         onRefresh={handleRefreshCollection}
         onAddStock={() => setModalOpen(true)}
+        notifications={notifications}
+        notificationsOpen={notificationsOpen}
+        unreadNotificationCount={unreadNotificationCount}
+        onToggleNotifications={toggleNotifications}
+        onCloseNotifications={() => setNotificationsOpen(false)}
+        onClearNotifications={clearNotifications}
         theme={theme}
         setTheme={setTheme}
       />
 
       <main className="app-main">
-        <StatusLine
-          isLoading={isLoading}
-          isBusy={isBusy}
-          error={error}
-          lastRun={lastRun}
-        />
         {view === "dashboard" ? (
           watchlistEmpty ? (
             <EmptyState onAddStock={() => setModalOpen(true)} />
@@ -843,6 +961,12 @@ function AppBar({
   refreshing,
   onRefresh,
   onAddStock,
+  notifications,
+  notificationsOpen,
+  unreadNotificationCount,
+  onToggleNotifications,
+  onCloseNotifications,
+  onClearNotifications,
   theme,
   setTheme,
 }: {
@@ -852,6 +976,12 @@ function AppBar({
   refreshing: boolean;
   onRefresh: () => void;
   onAddStock: () => void;
+  notifications: SystemNotification[];
+  notificationsOpen: boolean;
+  unreadNotificationCount: number;
+  onToggleNotifications: () => void;
+  onCloseNotifications: () => void;
+  onClearNotifications: () => void;
   theme: "light" | "dark";
   setTheme: (theme: "light" | "dark") => void;
 }) {
@@ -885,6 +1015,14 @@ function AppBar({
           </span>
           <RefreshCw size={13} className={refreshing ? "spin" : ""} />
         </button>
+        <NotificationCenter
+          notifications={notifications}
+          open={notificationsOpen}
+          unreadCount={unreadNotificationCount}
+          onToggle={onToggleNotifications}
+          onClose={onCloseNotifications}
+          onClear={onClearNotifications}
+        />
         <Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={onAddStock}>
           종목 추가
         </Button>
@@ -899,29 +1037,74 @@ function AppBar({
   );
 }
 
-function StatusLine({
-  isLoading,
-  isBusy,
-  error,
-  lastRun,
+function NotificationCenter({
+  notifications,
+  open,
+  unreadCount,
+  onToggle,
+  onClose,
+  onClear,
 }: {
-  isLoading: boolean;
-  isBusy: boolean;
-  error: string | null;
-  lastRun: CollectionRun | null;
+  notifications: SystemNotification[];
+  open: boolean;
+  unreadCount: number;
+  onToggle: () => void;
+  onClose: () => void;
+  onClear: () => void;
 }) {
-  if (!isLoading && !isBusy && !error && !lastRun) return null;
   return (
-    <div className="status-line" role="status">
-      {isLoading && <span>불러오는 중…</span>}
-      {isBusy && <span>수집 중…</span>}
-      {error && <span className="error">{error}</span>}
-      {!isBusy && !error && lastRun && (
-        <span className={lastRun.status === "failed" ? "error" : "ok"}>
-          {lastRun.status === "failed"
-            ? `수집 실패 · ${lastRun.message ?? "원인을 확인할 수 없습니다."}`
-            : `수집 완료 · 공시 ${lastRun.disclosures_inserted} · 뉴스 ${lastRun.news_inserted}`}
-        </span>
+    <div className="notification-center">
+      <button
+        type="button"
+        className={`icon-btn notification-trigger ${unreadCount > 0 ? "notification-trigger--unread" : ""}`}
+        aria-label={`시스템 알림${unreadCount > 0 ? ` ${unreadCount}개 읽지 않음` : ""}`}
+        aria-expanded={open}
+        onClick={onToggle}
+        title="시스템 알림"
+      >
+        <Bell size={17} />
+        {unreadCount > 0 && <span className="notification-dot" />}
+      </button>
+      {open && (
+        <div className="notification-panel" role="dialog" aria-label="시스템 알림">
+          <div className="notification-head">
+            <div>
+              <strong>시스템 알림</strong>
+              <span>{notifications.length ? `${notifications.length}개 기록` : "새 기록 없음"}</span>
+            </div>
+            <div className="notification-head-actions">
+              {notifications.length > 0 && (
+                <button type="button" onClick={onClear}>
+                  모두 지우기
+                </button>
+              )}
+              <button type="button" className="icon-btn notification-close" onClick={onClose} title="닫기">
+                <X size={14} />
+              </button>
+            </div>
+          </div>
+          <div className="notification-list" aria-live="polite">
+            {notifications.length === 0 ? (
+              <div className="notification-empty">아직 표시할 알림이 없습니다.</div>
+            ) : (
+              notifications.map((notification) => (
+                <div
+                  key={notification.id}
+                  className={`notification-item notification-item--${notification.tone}`}
+                >
+                  <span className="notification-mark" />
+                  <div>
+                    <div className="notification-item-head">
+                      <strong>{notification.title}</strong>
+                      <time>{formatNotificationStamp(notification.createdAt)}</time>
+                    </div>
+                    <p>{notification.message}</p>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
@@ -984,7 +1167,7 @@ function CollectionPane({
     <section className="dash-pane dash-pane--left">
       <div className="dash-pane-head">
         <h2>수집 · 자료</h2>
-        <span className="meta">마지막 {formatDate(lastCollected)} · 자동 5분</span>
+        <span className="meta">마지막 {formatDate(lastCollected)} · 자동 {AUTO_REFRESH_SECONDS / 60}분</span>
       </div>
       <Orbital
         stocks={stocks}
@@ -1436,6 +1619,12 @@ function clusteredSourceLabel(issue: ResearchIssue): string {
 }
 
 function FeedReadingPane({ issue }: { issue: ResearchIssue | null }) {
+  const [activeArticleId, setActiveArticleId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setActiveArticleId(null);
+  }, [issue?.id]);
+
   if (!issue) {
     return (
       <div className="feed-pane">
@@ -1448,6 +1637,15 @@ function FeedReadingPane({ issue }: { issue: ResearchIssue | null }) {
   }
 
   const sourceLabel = clusteredSourceLabel(issue);
+  const representativeArticle =
+    issue.relatedArticles.find((article) => article.isRepresentative) ??
+    issue.relatedArticles.find((article) => article.itemId === issue.itemId) ??
+    relatedArticleFromIssue(issue, true);
+  const activeArticle =
+    issue.clusterSize > 1
+      ? issue.relatedArticles.find((article) => article.id === activeArticleId) ?? representativeArticle
+      : representativeArticle;
+  const articleRoleLabel = activeArticle.isRepresentative ? "대표" : "관련";
 
   return (
     <div className="feed-pane">
@@ -1459,32 +1657,32 @@ function FeedReadingPane({ issue }: { issue: ResearchIssue | null }) {
             <b>{issue.stockName}</b> · {issue.stockCode}
           </span>
           <span>·</span>
-          <span>{sourceLabel}</span>
+          <span>{issue.clusterSize > 1 ? `${activeArticle.source} · ${articleRoleLabel}` : sourceLabel}</span>
           <span>·</span>
-          <span className="mono">{formatTime(issue.occurredAt)}</span>
+          <span className="mono">{formatTime(activeArticle.occurredAt)}</span>
           <span className="spacer" />
           <IconButton title="북마크">
             <Bookmark size={16} />
           </IconButton>
-          <a className="icon-btn" href={issue.url} target="_blank" rel="noreferrer" title="원문 새 탭">
+          <a className="icon-btn" href={activeArticle.url} target="_blank" rel="noreferrer" title="원문 새 탭">
             <ArrowUpRight size={16} />
           </a>
         </div>
-        <h1>{issue.title}</h1>
+        <h1>{activeArticle.title}</h1>
         <div className="pills">
           <span>
             <span className="pill-label">감성 </span>
-            <SentPill sentiment={issue.sentiment} />
+            <SentPill sentiment={activeArticle.sentiment} />
           </span>
           <span>
             <span className="pill-label">중요도 </span>
             <span className="pill-value">
-              <ImportanceDots value={issue.importance} /> {issue.importance}/5
+              <ImportanceDots value={activeArticle.importance} /> {activeArticle.importance}/5
             </span>
           </span>
           <span>
             <span className="pill-label">포트폴리오 영향 </span>
-            <span className="pill-value">{issue.importance >= 4 ? "높음" : issue.importance >= 3 ? "중간" : "낮음"}</span>
+            <span className="pill-value">{activeArticle.importance >= 4 ? "높음" : activeArticle.importance >= 3 ? "중간" : "낮음"}</span>
           </span>
           {issue.clusterSize > 1 && (
             <span>
@@ -1494,57 +1692,60 @@ function FeedReadingPane({ issue }: { issue: ResearchIssue | null }) {
               </span>
             </span>
           )}
-          <span className="muted analysis-meta">분석 {issue.modelVersion} · {formatTime(issue.collectedAt)}</span>
+          <span className="muted analysis-meta">분석 {activeArticle.modelVersion} · {formatTime(activeArticle.collectedAt)}</span>
         </div>
+        {issue.clusterSize > 1 && (
+          <section>
+            <h2>묶인 뉴스</h2>
+            <div className="related-list">
+              {issue.relatedArticles.map((article) => (
+                <button
+                  key={`${article.id}-${article.url}`}
+                  type="button"
+                  className="related-link"
+                  aria-current={activeArticle.id === article.id ? "true" : "false"}
+                  onClick={() => setActiveArticleId(article.id)}
+                >
+                  <span className="related-title-wrap">
+                    <span className="related-title">{article.title}</span>
+                    {article.isRepresentative && <span className="related-rep">대표</span>}
+                  </span>
+                  <span className="related-meta">
+                    {article.source} · {formatTime(article.occurredAt)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
         <section>
           <h2>
             <Sparkles size={11} /> AI 요약
           </h2>
-          <p className="summary">{issue.summary}</p>
+          <p className="summary">{activeArticle.summary}</p>
         </section>
         <section>
           <h2>포트폴리오 영향 분석</h2>
-          <p className="analysis">{issue.impact}</p>
+          <p className="analysis">{activeArticle.impact}</p>
         </section>
         <section>
           <h2>분석 근거</h2>
           <div className="keywords">
-            {issue.keywords.map((keyword) => (
+            {activeArticle.keywords.map((keyword) => (
               <span key={keyword} className="keyword">
                 {keyword}
               </span>
             ))}
           </div>
-          <a className="original-card" href={issue.url} target="_blank" rel="noreferrer">
+          <a className="original-card" href={activeArticle.url} target="_blank" rel="noreferrer">
             <span>
-              <Paperclip size={14} /> 원문 · {issue.source}
+              <Paperclip size={14} /> 원문 · {activeArticle.source}
             </span>
             <span className="open-link">
               새 탭으로 열기 <ArrowUpRight size={12} />
             </span>
           </a>
         </section>
-        {issue.clusterSize > 1 && (
-          <section>
-            <h2>관련 기사</h2>
-            <div className="related-list">
-              {issue.relatedArticles.map((article) => (
-                <a
-                  key={`${article.id}-${article.url}`}
-                  className="related-link"
-                  href={article.url}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <span className="related-title">{article.title}</span>
-                  <span className="related-meta">
-                    {article.source} · {formatTime(article.occurredAt)}
-                  </span>
-                </a>
-              ))}
-            </div>
-          </section>
-        )}
         <div className="actions">
           <Button icon={<ChevronLeft size={14} />}>이전</Button>
           <span className="spacer" />

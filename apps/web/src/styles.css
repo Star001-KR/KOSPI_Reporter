@@ -298,45 +298,150 @@ a {
   }
 }
 
-.status-line {
-  position: fixed;
-  top: 80px;
-  left: 50%;
-  z-index: 90;
+.notification-center {
+  position: relative;
+}
+
+.notification-trigger {
+  position: relative;
+}
+
+.notification-trigger--unread {
+  color: var(--ink);
+}
+
+.notification-dot {
+  position: absolute;
+  right: 7px;
+  top: 7px;
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid var(--surface);
+  border-radius: 50%;
+  background: var(--neg);
+}
+
+.notification-panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 120;
+  width: min(360px, calc(100vw - 32px));
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-modal);
+}
+
+.notification-head {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: var(--sp-2);
-  min-height: 0;
-  transform: translateX(-50%);
+  justify-content: space-between;
+  gap: var(--sp-3);
+  border-bottom: 1px solid var(--line-soft);
+  padding: var(--sp-3);
+}
+
+.notification-head > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.notification-head strong {
+  font-size: var(--fs-13);
+}
+
+.notification-head span,
+.notification-empty {
   color: var(--ink-muted);
-  font-size: var(--fs-12);
+  font-size: var(--fs-11);
+}
+
+.notification-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.notification-head-actions > button:not(.icon-btn) {
+  border: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  padding: 4px 6px;
+  font-size: var(--fs-11);
   font-weight: 600;
-  pointer-events: none;
 }
 
-.error {
-  border-radius: var(--r-sm);
-  border: 1px solid var(--line-soft);
-  background: var(--surface);
-  box-shadow: var(--shadow-2);
-  padding: 7px 10px;
+.notification-head-actions > button:not(.icon-btn):hover {
+  color: var(--ink);
 }
 
-.error {
-  color: var(--neg);
+.notification-close {
+  width: 26px;
+  height: 26px;
 }
 
-.status-line span {
-  border-radius: var(--r-sm);
-  border: 1px solid var(--line-soft);
-  background: var(--surface);
-  box-shadow: var(--shadow-2);
-  padding: 7px 10px;
+.notification-list {
+  max-height: 360px;
+  overflow: auto;
 }
 
-.status-line .ok {
-  color: var(--pos);
+.notification-empty {
+  padding: var(--sp-5);
+  text-align: center;
+}
+
+.notification-item {
+  display: grid;
+  grid-template-columns: 4px 1fr;
+  gap: var(--sp-3);
+  border-bottom: 1px solid var(--line-soft);
+  padding: var(--sp-3);
+}
+
+.notification-item:last-child {
+  border-bottom: 0;
+}
+
+.notification-mark {
+  width: 4px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+}
+
+.notification-item--success .notification-mark {
+  background: var(--pos);
+}
+
+.notification-item--error .notification-mark {
+  background: var(--neg);
+}
+
+.notification-item-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.notification-item-head strong {
+  font-size: var(--fs-12);
+}
+
+.notification-item-head time {
+  flex: 0 0 auto;
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-10);
+}
+
+.notification-item p {
+  margin: 3px 0 0;
+  color: var(--ink-soft);
+  font-size: var(--fs-12);
+  line-height: 1.45;
 }
 
 .btn {
@@ -830,7 +935,8 @@ a {
 }
 
 .planet-tooltip .ttkey {
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--bg);
+  opacity: 0.6;
   font-size: var(--fs-10);
 }
 
@@ -1405,13 +1511,37 @@ a {
   align-items: baseline;
   justify-content: space-between;
   gap: var(--sp-3);
+  width: 100%;
+  border: 0;
   border-bottom: 1px solid var(--line-soft);
+  background: transparent;
   color: var(--ink);
   padding: var(--sp-3) 0;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
 }
 
 .related-link:hover .related-title {
   color: var(--accent);
+}
+
+.related-link[aria-current="true"] {
+  background: var(--surface-2);
+  padding-inline: var(--sp-3);
+}
+
+.related-link[aria-current="true"] .related-title {
+  color: var(--accent);
+}
+
+.related-title-wrap {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
 }
 
 .related-title {
@@ -1420,6 +1550,16 @@ a {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--fs-13);
+  font-weight: 600;
+}
+
+.related-rep {
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  color: var(--ink-soft);
+  padding: 1px 6px;
+  font-size: var(--fs-10);
   font-weight: 600;
 }
 

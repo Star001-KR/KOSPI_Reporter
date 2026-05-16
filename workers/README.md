@@ -16,7 +16,7 @@ PYTHONPATH=apps/api:packages/core .venv/bin/python workers/scheduler.py
 
 ## 동작
 
-- `COLLECTION_INTERVAL_SECONDS`(기본 300초)마다 collection run을 한 번 실행한다.
+- `COLLECTION_INTERVAL_SECONDS`(기본 600초)마다 collection run을 한 번 실행한다.
 - 이미 `running` 상태의 collection run이 있으면 해당 주기는 건너뛴다.
 - 한 주기 실행이 실패해도 worker 프로세스는 종료되지 않으며, 실패 사유는 로그와 `collection_runs.message`에 남는다.
 - 수집 대상과 API 키는 API 서버와 동일하게 `.env`/환경 변수 설정을 따른다.

@@ -4,7 +4,7 @@ Runs the unified collection pipeline on an interval, reusing the same service
 logic the API uses (``app.services.collections``). No API server is required.
 
 Run with ``npm run worker``. The interval is taken from the
-``COLLECTION_INTERVAL_SECONDS`` environment variable (default 300 seconds).
+``COLLECTION_INTERVAL_SECONDS`` environment variable (default 600 seconds).
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from app.services.collections import run_scheduled_collection
 
 logger = logging.getLogger("kospi.scheduler")
 
-_DEFAULT_INTERVAL_SECONDS = 300
+_DEFAULT_INTERVAL_SECONDS = 600
 
 
 def _interval_seconds() -> int:
