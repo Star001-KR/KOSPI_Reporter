@@ -26,10 +26,13 @@ import type { ReactNode } from "react";
 
 import { ApiError, api } from "./api";
 import {
+  deviceTheme,
   loadReadIds,
+  loadTheme,
   loadWatchlist,
   removeWatchlistEntry,
   saveReadIds,
+  saveTheme,
   saveWatchlist,
   upsertWatchlistEntry,
   watchlistKey,
@@ -741,7 +744,7 @@ function App() {
   const [modalOpen, setModalOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notifications, setNotifications] = useState<SystemNotification[]>([]);
-  const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [theme, setTheme] = useState<"light" | "dark">(deviceTheme);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -880,6 +883,9 @@ function App() {
     const scope = String(authUser.id);
     setWatchlist(loadWatchlist(scope));
     setReadIds(loadReadIds(scope));
+    // Theme is a display preference, not private data, so it is restored on
+    // sign-in but left untouched on sign-out (no flash back to light).
+    setTheme(loadTheme(scope));
   }, [authUser]);
 
   // Load real daily closes for each symbol once details arrive; a per-symbol
@@ -1319,7 +1325,11 @@ function AppBar({
         </IconButton>
         <IconButton
           title={theme === "dark" ? "라이트 모드" : "다크 모드"}
-          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          onClick={() => {
+            const next = theme === "dark" ? "light" : "dark";
+            setTheme(next);
+            saveTheme(String(user.id), next);
+          }}
         >
           {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
         </IconButton>

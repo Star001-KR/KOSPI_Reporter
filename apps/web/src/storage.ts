@@ -13,6 +13,7 @@ import type { WatchlistEntry } from "./types";
 
 const WATCHLIST_KEY = "kospi.watchlist.v1";
 const READ_ITEMS_KEY = "kospi.read-items.v1";
+const THEME_KEY = "kospi.theme.v1";
 
 /** Per-account localStorage key, so one visitor's data never loads for another. */
 function scopedKey(base: string, scope: string): string {
@@ -127,6 +128,40 @@ export function saveReadIds(scope: string, ids: Set<string>): void {
       scopedKey(READ_ITEMS_KEY, scope),
       JSON.stringify([...ids]),
     );
+  } catch {
+    // localStorage unavailable (private mode / quota) — keep state in memory.
+  }
+}
+
+/**
+ * The device's OS-level light / dark preference, used as the theme default
+ * until an account explicitly picks one.
+ */
+export function deviceTheme(): "light" | "dark" {
+  try {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light";
+  } catch {
+    return "light";
+  }
+}
+
+/** Read an account's saved theme, falling back to the device preference. */
+export function loadTheme(scope: string): "light" | "dark" {
+  try {
+    const saved = window.localStorage.getItem(scopedKey(THEME_KEY, scope));
+    if (saved === "light" || saved === "dark") return saved;
+  } catch {
+    // localStorage unavailable — fall through to the device preference.
+  }
+  return deviceTheme();
+}
+
+/** Persist an account's light / dark theme choice. */
+export function saveTheme(scope: string, theme: "light" | "dark"): void {
+  try {
+    window.localStorage.setItem(scopedKey(THEME_KEY, scope), theme);
   } catch {
     // localStorage unavailable (private mode / quota) — keep state in memory.
   }
