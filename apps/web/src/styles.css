@@ -1700,22 +1700,6 @@ a {
   font-weight: 600;
 }
 
-.feed-item-source {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  flex: 0 0 auto;
-  margin-left: auto;
-  max-width: 55%;
-}
-
-.feed-item-source-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .feed-item .when {
   font-family: var(--font-mono);
 }
@@ -1733,6 +1717,7 @@ a {
 
 .feed-unread-dot {
   flex: 0 0 auto;
+  margin-left: auto;
   width: 8px;
   height: 8px;
   border-radius: 50%;

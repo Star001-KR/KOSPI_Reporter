@@ -2095,8 +2095,6 @@ function FeedListItem({
   unread: boolean;
   onClick: () => void;
 }) {
-  const sourceLabel = clusteredSourceLabel(issue);
-
   return (
     <button className="feed-item" aria-current={selected ? "true" : "false"} onClick={onClick}>
       <span className={`s-rail s-rail--${issue.sentiment}`} />
@@ -2104,14 +2102,11 @@ function FeedListItem({
         <span className="meta">
           <MktChip market={issue.market} />
           <span className="feed-stock-name">{issue.stockName}</span>
-          <span className="feed-item-source">
-            <span
-              className="feed-unread-dot"
-              data-unread={unread ? "true" : "false"}
-              aria-hidden="true"
-            />
-            <span className="feed-item-source-label">{sourceLabel}</span>
-          </span>
+          <span
+            className="feed-unread-dot"
+            data-unread={unread ? "true" : "false"}
+            aria-hidden="true"
+          />
         </span>
         <span className="title">{issue.title}</span>
         <span className="badges">
