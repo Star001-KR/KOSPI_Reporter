@@ -32,6 +32,7 @@ class Settings:
     auth_cookie_secure: bool
     auth_cookie_samesite: str
     auth_session_days: int
+    enable_dev_routes: bool
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -60,6 +61,8 @@ class Settings:
             in {"1", "true", "yes"},
             auth_cookie_samesite=os.getenv("AUTH_COOKIE_SAMESITE", "lax").lower(),
             auth_session_days=int(os.getenv("AUTH_SESSION_DAYS", "30")),
+            enable_dev_routes=os.getenv("ENABLE_DEV_ROUTES", "").lower()
+            in {"1", "true", "yes"},
         )
 
 

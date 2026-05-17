@@ -1,4 +1,4 @@
-"""Tests for symbol research-source resolution (preferred → common stock)."""
+"""Tests for symbol research-source resolution and per-user ownership."""
 
 from __future__ import annotations
 
@@ -9,9 +9,18 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from fastapi import HTTPException
+
 from app.database import Base
-from app.models import NewsItem, Symbol
-from app.routers.symbols import _symbol_detail, research_symbol_ids
+from app.models import NewsItem, Symbol, User
+from app.routers.symbols import (
+    _symbol_detail,
+    create_symbol,
+    delete_symbol,
+    research_symbol_ids,
+    update_symbol,
+)
+from app.schemas import SymbolCreate, SymbolPatch
 from app.services.symbol_catalog import ListedSymbol
 
 _RUNTIME_CATALOG = (
@@ -93,6 +102,63 @@ class ResearchSymbolIdsTests(unittest.TestCase):
 
         self.assertIn("삼성전자 신규 라인 가동", common_titles)
         self.assertIn("삼성전자 신규 라인 가동", preferred_titles)
+
+
+class SymbolOwnershipTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(self.engine)
+        self.db = sessionmaker(bind=self.engine, autoflush=False, autocommit=False)()
+
+    def tearDown(self) -> None:
+        self.db.close()
+        self.engine.dispose()
+
+    def _user(self, email: str) -> User:
+        user = User(email=email)
+        self.db.add(user)
+        self.db.commit()
+        return user
+
+    def test_only_the_registrant_can_modify_a_symbol(self) -> None:
+        owner = self._user("owner@example.com")
+        intruder = self._user("intruder@example.com")
+        created = create_symbol(
+            SymbolCreate(market="KOSPI", code="005930", name="삼성전자"),
+            db=self.db,
+            user=owner,
+        )
+
+        # A different account can neither edit nor delete it.
+        with self.assertRaises(HTTPException) as patch_ctx:
+            update_symbol(
+                created.id, SymbolPatch(memo="침입"), db=self.db, user=intruder
+            )
+        self.assertEqual(patch_ctx.exception.status_code, 403)
+
+        with self.assertRaises(HTTPException) as delete_ctx:
+            delete_symbol(created.id, db=self.db, user=intruder)
+        self.assertEqual(delete_ctx.exception.status_code, 403)
+
+        # The registrant can.
+        updated = update_symbol(
+            created.id, SymbolPatch(memo="내 메모"), db=self.db, user=owner
+        )
+        self.assertEqual(updated.memo, "내 메모")
+
+    def test_symbol_without_an_owner_cannot_be_modified(self) -> None:
+        user = self._user("user@example.com")
+        orphan = Symbol(market="KOSPI", code="000660", name="SK하이닉스")
+        self.db.add(orphan)
+        self.db.commit()
+
+        with self.assertRaises(HTTPException) as ctx:
+            update_symbol(orphan.id, SymbolPatch(memo="x"), db=self.db, user=user)
+        self.assertEqual(ctx.exception.status_code, 403)
 
 
 if __name__ == "__main__":

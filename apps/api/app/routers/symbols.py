@@ -7,7 +7,8 @@ from sqlalchemy.orm import Session, joinedload
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.database import get_db
-from app.models import AnalysisResult, Disclosure, Holding, NewsItem, Symbol
+from app.models import AnalysisResult, Disclosure, Holding, NewsItem, Symbol, User
+from app.routers.auth import current_user
 from app.schemas import (
     AnalysisResultRead,
     AnalyzedDisclosure,
@@ -44,6 +45,19 @@ def _get_symbol_or_404(db: Session, symbol_id: int) -> Symbol:
     if symbol is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Symbol not found")
     return symbol
+
+
+def _require_symbol_owner(symbol: Symbol, user: User) -> None:
+    """Allow only the user who registered a symbol to modify or delete it.
+
+    A symbol with no owner — seeded data, or a row created before per-user
+    ownership existed — belongs to nobody and can never be modified here.
+    """
+    if symbol.owner_user_id is None or symbol.owner_user_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="이 종목을 등록한 사용자만 수정할 수 있습니다.",
+        )
 
 
 def research_symbol_ids(db: Session, symbol: Symbol) -> list[int]:
@@ -225,13 +239,18 @@ def lookup_listed_symbols(
 
 
 @router.post("", response_model=SymbolRead, status_code=status.HTTP_201_CREATED)
-def create_symbol(payload: SymbolCreate, db: Session = Depends(get_db)) -> SymbolRead:
+def create_symbol(
+    payload: SymbolCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> SymbolRead:
     identity = _resolve_create_identity(payload)
     symbol = Symbol(
         market=identity.market,
         code=identity.code,
         name=identity.name,
         memo=payload.memo,
+        owner_user_id=user.id,
     )
     db.add(symbol)
     if payload.holding is not None:
@@ -263,9 +282,13 @@ def get_symbol_price_history(
 
 @router.patch("/{symbol_id}", response_model=SymbolRead)
 def update_symbol(
-    symbol_id: int, payload: SymbolPatch, db: Session = Depends(get_db)
+    symbol_id: int,
+    payload: SymbolPatch,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ) -> SymbolRead:
     symbol = _get_symbol_or_404(db, symbol_id)
+    _require_symbol_owner(symbol, user)
     data = payload.model_dump(exclude_unset=True)
     holding_was_set = "holding" in data
     holding_data = data.pop("holding", None)
@@ -284,13 +307,22 @@ def update_symbol(
 
 
 @router.delete("/{symbol_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_symbol(symbol_id: int, db: Session = Depends(get_db)) -> None:
+def delete_symbol(
+    symbol_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> None:
     symbol = _get_symbol_or_404(db, symbol_id)
+    _require_symbol_owner(symbol, user)
     db.delete(symbol)
     db.commit()
 
 
-@router.post("/{symbol_id}/mock-activity", response_model=MockActivityResult)
+@router.post(
+    "/{symbol_id}/mock-activity",
+    response_model=MockActivityResult,
+    dependencies=[Depends(current_user)],
+)
 def create_mock_activity(
     symbol_id: int, db: Session = Depends(get_db)
 ) -> MockActivityResult:

@@ -36,7 +36,9 @@ app.add_middleware(
 app.include_router(symbols.router)
 app.include_router(portfolio.router)
 app.include_router(collections.router)
-app.include_router(dev.router)
+# Demo/seed routes are mounted only when explicitly enabled (never in prod).
+if settings.enable_dev_routes:
+    app.include_router(dev.router)
 app.include_router(auth.router)
 
 

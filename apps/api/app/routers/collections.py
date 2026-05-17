@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.database import get_db
 from app.models import CollectionRun
+from app.routers.auth import current_user
 from app.schemas import CollectionRunRead, CollectionRunRequest
 from app.services.analyzer import analyze_pending
 from app.services.collections import CollectionOptions, run_collection
@@ -16,7 +17,11 @@ from app.services.opendart import collect_disclosures, run_corp_code_import
 router = APIRouter(prefix="/api/collections", tags=["collections"])
 
 
-@router.post("/run", response_model=CollectionRunRead)
+@router.post(
+    "/run",
+    response_model=CollectionRunRead,
+    dependencies=[Depends(current_user)],
+)
 def trigger_collection_run(
     payload: CollectionRunRequest | None = None,
     db: Session = Depends(get_db),
@@ -64,7 +69,11 @@ def get_collection_run(
     return CollectionRunRead.model_validate(run)
 
 
-@router.post("/corp-codes/import", response_model=CollectionRunRead)
+@router.post(
+    "/corp-codes/import",
+    response_model=CollectionRunRead,
+    dependencies=[Depends(current_user)],
+)
 def import_corp_codes(db: Session = Depends(get_db)) -> CollectionRunRead:
     """Download the OpenDART corp code archive and upsert ``dart_corp_codes``.
 
@@ -75,19 +84,31 @@ def import_corp_codes(db: Session = Depends(get_db)) -> CollectionRunRead:
     return CollectionRunRead.model_validate(run_corp_code_import(db))
 
 
-@router.post("/disclosures", response_model=CollectionRunRead)
+@router.post(
+    "/disclosures",
+    response_model=CollectionRunRead,
+    dependencies=[Depends(current_user)],
+)
 def collect_disclosure_run(db: Session = Depends(get_db)) -> CollectionRunRead:
     """Collect recent OpenDART disclosures for every registered symbol."""
     return CollectionRunRead.model_validate(collect_disclosures(db))
 
 
-@router.post("/news", response_model=CollectionRunRead)
+@router.post(
+    "/news",
+    response_model=CollectionRunRead,
+    dependencies=[Depends(current_user)],
+)
 def collect_news_run(db: Session = Depends(get_db)) -> CollectionRunRead:
     """Collect recent Naver news for every registered symbol."""
     return CollectionRunRead.model_validate(collect_news(db))
 
 
-@router.post("/analyze", response_model=CollectionRunRead)
+@router.post(
+    "/analyze",
+    response_model=CollectionRunRead,
+    dependencies=[Depends(current_user)],
+)
 def analyze_run(db: Session = Depends(get_db)) -> CollectionRunRead:
     """Analyze collected news and disclosures that have no analysis result yet."""
     return CollectionRunRead.model_validate(analyze_pending(db))
