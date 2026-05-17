@@ -1945,6 +1945,17 @@ a {
   background: var(--neg);
 }
 
+.feed-bookmark-flag {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  color: var(--gold);
+}
+
+.icon-btn[data-bookmarked="true"] {
+  color: var(--gold);
+}
+
 .feed-item .title {
   margin-top: 2px;
   padding-right: 64px;

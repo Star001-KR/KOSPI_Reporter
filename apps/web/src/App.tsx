@@ -27,10 +27,12 @@ import type { ReactNode } from "react";
 import { ApiError, api } from "./api";
 import {
   deviceTheme,
+  loadBookmarkIds,
   loadReadIds,
   loadTheme,
   loadWatchlist,
   removeWatchlistEntry,
+  saveBookmarkIds,
   saveReadIds,
   saveTheme,
   saveWatchlist,
@@ -120,6 +122,7 @@ type FeedFilter = {
   type?: IssueType | null;
   sentiment?: SentKey | null;
   minImportance?: number;
+  bookmarkedOnly?: boolean;
 };
 
 type NotificationTone = "info" | "success" | "error";
@@ -752,6 +755,7 @@ function App() {
   const [isBusy, setIsBusy] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(AUTO_REFRESH_SECONDS);
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
+  const [bookmarkIds, setBookmarkIds] = useState<Set<string>>(new Set());
 
   const markRead = useCallback((id: string) => {
     if (!authUser) return;
@@ -761,6 +765,18 @@ function App() {
       const next = new Set(prev);
       next.add(id);
       saveReadIds(scope, next);
+      return next;
+    });
+  }, [authUser]);
+
+  const toggleBookmark = useCallback((id: string) => {
+    if (!authUser) return;
+    const scope = String(authUser.id);
+    setBookmarkIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      saveBookmarkIds(scope, next);
       return next;
     });
   }, [authUser]);
@@ -878,11 +894,13 @@ function App() {
     if (!authUser) {
       setWatchlist([]);
       setReadIds(new Set());
+      setBookmarkIds(new Set());
       return;
     }
     const scope = String(authUser.id);
     setWatchlist(loadWatchlist(scope));
     setReadIds(loadReadIds(scope));
+    setBookmarkIds(loadBookmarkIds(scope));
     // Theme is a display preference, not private data, so it is restored on
     // sign-in but left untouched on sign-out (no flash back to light).
     setTheme(loadTheme(scope));
@@ -1146,6 +1164,8 @@ function App() {
             setSelectedIssueId={setSelectedIssueId}
             readIds={readIds}
             markRead={markRead}
+            bookmarkIds={bookmarkIds}
+            toggleBookmark={toggleBookmark}
           />
         )}
       </main>
@@ -1898,6 +1918,8 @@ function Feed({
   setSelectedIssueId,
   readIds,
   markRead,
+  bookmarkIds,
+  toggleBookmark,
 }: {
   stocks: ResearchStock[];
   issues: ResearchIssue[];
@@ -1907,10 +1929,16 @@ function Feed({
   setSelectedIssueId: (id: string | null) => void;
   readIds: Set<string>;
   markRead: (id: string) => void;
+  bookmarkIds: Set<string>;
+  toggleBookmark: (id: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const emptyMessage =
-    stocks.length === 0 ? "등록한 종목이 아직 없어요" : "조건에 맞는 항목이 없어요";
+    stocks.length === 0
+      ? "등록한 종목이 아직 없어요"
+      : filter.bookmarkedOnly
+        ? "북마크한 항목이 없어요"
+        : "조건에 맞는 항목이 없어요";
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     const filtered = issues.filter((issue) => {
@@ -1919,6 +1947,7 @@ function Feed({
       if (filter.type && issue.type !== filter.type) return false;
       if (filter.sentiment && issue.sentiment !== filter.sentiment) return false;
       if (filter.minImportance && issue.importance < filter.minImportance) return false;
+      if (filter.bookmarkedOnly && !bookmarkIds.has(issue.id)) return false;
       if (
         q &&
         !`${issue.stockName} ${issue.stockCode} ${issue.title}`
@@ -1937,7 +1966,7 @@ function Feed({
       seen.add(issue.id);
       return true;
     });
-  }, [issues, filter, query]);
+  }, [issues, filter, query, bookmarkIds]);
   const selected = visible.find((issue) => issue.id === selectedIssueId) ?? visible[0] ?? null;
 
   useEffect(() => {
@@ -1978,11 +2007,18 @@ function Feed({
               issue={issue}
               selected={selected?.id === issue.id}
               unread={!readIds.has(issue.id)}
+              bookmarked={bookmarkIds.has(issue.id)}
               onClick={() => setSelectedIssueId(issue.id)}
             />
           ))}
         </div>
-        <FeedReadingPane issue={selected} />
+        <FeedReadingPane
+          issue={selected}
+          bookmarked={selected !== null && bookmarkIds.has(selected.id)}
+          onToggleBookmark={() => {
+            if (selected) toggleBookmark(selected.id);
+          }}
+        />
       </div>
     </div>
   );
@@ -2231,6 +2267,14 @@ function FeedFilters({
       >
         중요도 4 이상
       </Chip>
+      <Chip
+        ghost
+        active={Boolean(filter.bookmarkedOnly)}
+        onClick={() => setFilter({ ...filter, bookmarkedOnly: !filter.bookmarkedOnly })}
+      >
+        <Bookmark size={12} />
+        북마크
+      </Chip>
     </div>
   );
 }
@@ -2239,11 +2283,13 @@ function FeedListItem({
   issue,
   selected,
   unread,
+  bookmarked,
   onClick,
 }: {
   issue: ResearchIssue;
   selected: boolean;
   unread: boolean;
+  bookmarked: boolean;
   onClick: () => void;
 }) {
   return (
@@ -2258,6 +2304,11 @@ function FeedListItem({
             data-unread={unread ? "true" : "false"}
             aria-hidden="true"
           />
+          {bookmarked && (
+            <span className="feed-bookmark-flag" role="img" aria-label="북마크함">
+              <Bookmark size={12} fill="currentColor" />
+            </span>
+          )}
         </span>
         <span className="title">{issue.title}</span>
         <span className="badges">
@@ -2277,7 +2328,15 @@ function clusteredSourceLabel(issue: ResearchIssue): string {
   return `${issue.clusterSources[0]} 외 ${issue.clusterSources.length - 1}곳`;
 }
 
-function FeedReadingPane({ issue }: { issue: ResearchIssue | null }) {
+function FeedReadingPane({
+  issue,
+  bookmarked,
+  onToggleBookmark,
+}: {
+  issue: ResearchIssue | null;
+  bookmarked: boolean;
+  onToggleBookmark: () => void;
+}) {
   const [activeArticleId, setActiveArticleId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -2320,9 +2379,16 @@ function FeedReadingPane({ issue }: { issue: ResearchIssue | null }) {
           <span>·</span>
           <span className="mono">{formatTime(activeArticle.occurredAt)}</span>
           <span className="spacer" />
-          <IconButton title="북마크">
-            <Bookmark size={16} />
-          </IconButton>
+          <button
+            type="button"
+            className="icon-btn"
+            data-bookmarked={bookmarked ? "true" : "false"}
+            title={bookmarked ? "북마크 해제" : "북마크"}
+            aria-pressed={bookmarked}
+            onClick={onToggleBookmark}
+          >
+            <Bookmark size={16} fill={bookmarked ? "currentColor" : "none"} />
+          </button>
           <a className="icon-btn" href={activeArticle.url} target="_blank" rel="noreferrer" title="원문 새 탭">
             <ArrowUpRight size={16} />
           </a>

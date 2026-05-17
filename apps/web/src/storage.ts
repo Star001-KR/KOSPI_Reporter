@@ -14,6 +14,7 @@ import type { WatchlistEntry } from "./types";
 const WATCHLIST_KEY = "kospi.watchlist.v1";
 const READ_ITEMS_KEY = "kospi.read-items.v1";
 const THEME_KEY = "kospi.theme.v1";
+const BOOKMARK_KEY = "kospi.bookmarks.v1";
 
 /** Per-account localStorage key, so one visitor's data never loads for another. */
 function scopedKey(base: string, scope: string): string {
@@ -126,6 +127,33 @@ export function saveReadIds(scope: string, ids: Set<string>): void {
   try {
     window.localStorage.setItem(
       scopedKey(READ_ITEMS_KEY, scope),
+      JSON.stringify([...ids]),
+    );
+  } catch {
+    // localStorage unavailable (private mode / quota) — keep state in memory.
+  }
+}
+
+/** Read the set of feed issue ids the account has bookmarked. */
+export function loadBookmarkIds(scope: string): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(scopedKey(BOOKMARK_KEY, scope));
+    if (!raw) return new Set();
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(
+      parsed.filter((value): value is string => typeof value === "string"),
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+/** Persist an account's set of bookmarked feed issue ids. */
+export function saveBookmarkIds(scope: string, ids: Set<string>): void {
+  try {
+    window.localStorage.setItem(
+      scopedKey(BOOKMARK_KEY, scope),
       JSON.stringify([...ids]),
     );
   } catch {
