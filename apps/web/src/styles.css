@@ -1240,6 +1240,7 @@ a {
   display: grid;
   flex: 1;
   grid-template-columns: 1fr 1fr;
+  align-content: start;
   gap: var(--sp-3);
   min-height: 0;
   overflow: auto;
