@@ -2202,6 +2202,16 @@ function FeedReadingPane({ issue }: { issue: ResearchIssue | null }) {
           )}
           <span className="muted analysis-meta">분석 {activeArticle.modelVersion} · {formatTime(activeArticle.collectedAt)}</span>
         </div>
+        <section>
+          <h2>
+            <Sparkles size={11} /> AI 요약
+          </h2>
+          <p className="summary">{activeArticle.summary}</p>
+        </section>
+        <section>
+          <h2>포트폴리오 영향 분석</h2>
+          <p className="analysis">{activeArticle.impact}</p>
+        </section>
         {issue.clusterSize > 1 && (
           <section>
             <h2>묶인 뉴스</h2>
@@ -2226,16 +2236,6 @@ function FeedReadingPane({ issue }: { issue: ResearchIssue | null }) {
             </div>
           </section>
         )}
-        <section>
-          <h2>
-            <Sparkles size={11} /> AI 요약
-          </h2>
-          <p className="summary">{activeArticle.summary}</p>
-        </section>
-        <section>
-          <h2>포트폴리오 영향 분석</h2>
-          <p className="analysis">{activeArticle.impact}</p>
-        </section>
         <section>
           <h2>분석 근거</h2>
           <div className="keywords">
