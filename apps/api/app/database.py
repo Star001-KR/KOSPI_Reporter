@@ -29,6 +29,7 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     _ensure_symbol_owner_column()
+    _ensure_one_running_collection_index()
 
 
 def _ensure_symbol_owner_column() -> None:
@@ -48,6 +49,37 @@ def _ensure_symbol_owner_column() -> None:
     with engine.begin() as connection:
         connection.execute(
             text("ALTER TABLE symbols ADD COLUMN owner_user_id INTEGER")
+        )
+
+
+def _ensure_one_running_collection_index() -> None:
+    """Add the partial unique index that lets at most one unified collection
+    run be ``running`` at a time.
+
+    ``create_all()`` never adds an index to an existing table, so a database
+    from an earlier build needs this one-time creation. Any leftover
+    ``running`` collection rows are failed first so the unique index can be
+    built; a fresh database already has the index and skips this.
+    """
+    inspector = inspect(engine)
+    if "collection_runs" not in inspector.get_table_names():
+        return
+    indexes = {ix["name"] for ix in inspector.get_indexes("collection_runs")}
+    if "uq_collection_runs_one_running" in indexes:
+        return
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE collection_runs SET status = 'failed' "
+                "WHERE status = 'running' AND run_type = 'collection'"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE UNIQUE INDEX uq_collection_runs_one_running "
+                "ON collection_runs (run_type) "
+                "WHERE status = 'running' AND run_type = 'collection'"
+            )
         )
 
 

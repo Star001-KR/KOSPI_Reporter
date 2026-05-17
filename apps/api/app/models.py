@@ -12,6 +12,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -255,7 +256,18 @@ class AnalysisResult(Base):
 
 class CollectionRun(Base):
     __tablename__ = "collection_runs"
-    __table_args__ = (Index("ix_collection_runs_started", "started_at"),)
+    __table_args__ = (
+        Index("ix_collection_runs_started", "started_at"),
+        # At most one unified collection run may be 'running' at a time; the
+        # partial unique index makes that guard atomic (no check/insert race).
+        Index(
+            "uq_collection_runs_one_running",
+            "run_type",
+            unique=True,
+            sqlite_where=text("status = 'running' AND run_type = 'collection'"),
+            postgresql_where=text("status = 'running' AND run_type = 'collection'"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     run_type: Mapped[str] = mapped_column(String(40), nullable=False)

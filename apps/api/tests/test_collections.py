@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 import io
 import unittest
 import zipfile
@@ -20,6 +21,7 @@ from app.models import (
     Disclosure,
     NewsItem,
     Symbol,
+    utcnow,
 )
 from app.routers.collections import (
     get_collection_run,
@@ -28,6 +30,7 @@ from app.routers.collections import (
 )
 from app.schemas import CollectionRunRequest
 from app.services.collections import (
+    CollectionInProgressError,
     CollectionOptions,
     run_collection,
     run_scheduled_collection,
@@ -276,6 +279,44 @@ class ScheduledCollectionTests(_DbTestCase):
         self.db.commit()
         result = run_scheduled_collection(self.db, self._ANALYZE_ONLY)
         self.assertIsNotNone(result)
+
+
+class CollectionConcurrencyTests(_DbTestCase):
+    _OFFLINE = CollectionOptions(
+        include_disclosures=False, include_news=False, analyze=False
+    )
+
+    def _running_collection(self, *, started_at=None) -> CollectionRun:
+        run = CollectionRun(run_type="collection", status="running")
+        if started_at is not None:
+            run.started_at = started_at
+        self.db.add(run)
+        self.db.commit()
+        return run
+
+    def test_run_collection_rejects_a_concurrent_run(self) -> None:
+        self._running_collection()
+        with self.assertRaises(CollectionInProgressError):
+            run_collection(self.db, self._OFFLINE)
+
+    def test_trigger_collection_run_conflict_returns_409(self) -> None:
+        self._running_collection()
+        with self.assertRaises(HTTPException) as ctx:
+            trigger_collection_run(
+                payload=CollectionRunRequest(
+                    include_disclosures=False, include_news=False, analyze=False
+                ),
+                db=self.db,
+            )
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_stale_running_run_is_reclaimed(self) -> None:
+        stale = self._running_collection(started_at=utcnow() - timedelta(hours=2))
+        # The stale run no longer blocks a fresh collection.
+        run = run_collection(self.db, self._OFFLINE)
+        self.assertEqual(run.status, "success")
+        self.db.refresh(stale)
+        self.assertEqual(stale.status, "failed")
 
 
 if __name__ == "__main__":

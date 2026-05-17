@@ -13,8 +13,10 @@ problems are reported in ``message`` without failing the whole run.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from kospi_core import Analyzer, RuleBasedAnalyzer
@@ -31,6 +33,14 @@ from app.services.opendart import (
 )
 
 COLLECTION_RUN_TYPE = "collection"
+
+# A collection run still 'running' long past this is treated as dead — its
+# process was killed before the in-process error handler could record it.
+_STALE_RUN_AFTER_SECONDS = 30 * 60
+
+
+class CollectionInProgressError(RuntimeError):
+    """Raised when a collection run cannot start: one is already running."""
 
 
 @dataclass
@@ -56,6 +66,30 @@ def _step_note(label: str, processed: int, inserted: int, failures: list[str]) -
     if failures:
         note += f"/실패 {len(failures)}건"
     return note
+
+
+def _reclaim_stale_runs(db: Session) -> None:
+    """Fail collection runs left ``running`` long past any real run.
+
+    A row stays ``running`` when its process is killed mid-collection. Left
+    alone it would hold the single-running slot forever (the partial unique
+    index) and block every future run.
+    """
+    cutoff = utcnow() - timedelta(seconds=_STALE_RUN_AFTER_SECONDS)
+    stale = list(
+        db.execute(
+            select(CollectionRun)
+            .where(CollectionRun.run_type == COLLECTION_RUN_TYPE)
+            .where(CollectionRun.status == "running")
+            .where(CollectionRun.started_at < cutoff)
+        ).scalars()
+    )
+    for run in stale:
+        run.status = "failed"
+        run.finished_at = utcnow()
+        run.message = "수집이 비정상 종료되어 실패로 정리되었습니다."
+    if stale:
+        db.commit()
 
 
 def run_collection(
@@ -86,9 +120,16 @@ def run_collection(
     if analyzer is None:
         analyzer = RuleBasedAnalyzer()
 
+    _reclaim_stale_runs(db)
     run = CollectionRun(run_type=COLLECTION_RUN_TYPE, status="running")
     db.add(run)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise CollectionInProgressError(
+            "이미 수집이 진행 중입니다. 잠시 후 다시 시도해 주세요."
+        ) from exc
 
     notes: list[str] = []
     step_failed = False
@@ -167,25 +208,17 @@ def run_collection(
     return run
 
 
-def _collection_in_progress(db: Session) -> bool:
-    """True when a unified collection run is currently in progress."""
-    running = db.execute(
-        select(CollectionRun.id)
-        .where(CollectionRun.run_type == COLLECTION_RUN_TYPE)
-        .where(CollectionRun.status == "running")
-        .limit(1)
-    ).first()
-    return running is not None
-
-
 def run_scheduled_collection(
     db: Session, options: CollectionOptions | None = None
 ) -> CollectionRun | None:
     """Run one collection unless one is already in progress.
 
-    Returns the recorded :class:`CollectionRun`, or ``None`` when the tick was
-    skipped because another collection run had not finished yet.
+    Returns the recorded :class:`CollectionRun`, or ``None`` when another
+    collection run is already running. The partial unique index on
+    ``collection_runs`` rejects the duplicate atomically, so there is no
+    check-then-insert race.
     """
-    if _collection_in_progress(db):
+    try:
+        return run_collection(db, options or CollectionOptions())
+    except CollectionInProgressError:
         return None
-    return run_collection(db, options or CollectionOptions())

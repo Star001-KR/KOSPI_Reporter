@@ -24,7 +24,7 @@ import {
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
-import { api } from "./api";
+import { ApiError, api } from "./api";
 import {
   loadReadIds,
   loadWatchlist,
@@ -930,7 +930,21 @@ function App() {
 
   async function handleRefreshCollection() {
     await runAction(async () => {
-      const run = await api.runCollection();
+      let run;
+      try {
+        run = await api.runCollection();
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 409) {
+          // A collection is already running — a notice, not a failure.
+          pushNotification({
+            tone: "info",
+            title: "수집 진행 중",
+            message: err.message,
+          });
+          return;
+        }
+        throw err;
+      }
       await refresh();
       setSecondsLeft(AUTO_REFRESH_SECONDS);
       if (run.status === "failed") {

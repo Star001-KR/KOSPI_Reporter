@@ -10,7 +10,11 @@ from app.models import CollectionRun
 from app.routers.auth import current_user
 from app.schemas import CollectionRunRead, CollectionRunRequest
 from app.services.analyzer import analyze_pending
-from app.services.collections import CollectionOptions, run_collection
+from app.services.collections import (
+    CollectionInProgressError,
+    CollectionOptions,
+    run_collection,
+)
 from app.services.naver_news import collect_news
 from app.services.opendart import collect_disclosures, run_corp_code_import
 
@@ -31,7 +35,7 @@ def trigger_collection_run(
     The request body is optional; an empty body collects disclosures and news
     for every registered symbol and analyzes the result. A missing API key or
     a failed step is reported as a run with ``status = "failed"`` rather than
-    an HTTP error.
+    an HTTP error. A collection already in progress is rejected with HTTP 409.
     """
     request = payload or CollectionRunRequest()
     options = CollectionOptions(
@@ -41,7 +45,14 @@ def trigger_collection_run(
         include_news=request.include_news,
         analyze=request.analyze,
     )
-    return CollectionRunRead.model_validate(run_collection(db, options))
+    try:
+        run = run_collection(db, options)
+    except CollectionInProgressError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    return CollectionRunRead.model_validate(run)
 
 
 @router.get("/runs", response_model=list[CollectionRunRead])
