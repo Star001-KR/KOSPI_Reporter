@@ -4,11 +4,39 @@
  * A visitor's watchlist and holdings (quantity / average cost / memo) live only
  * in this browser via localStorage. The server stores public research data
  * (news, disclosures, analysis) but never a visitor's personal portfolio.
+ *
+ * Storage is scoped per signed-in account, so two people sharing one browser
+ * never see each other's watchlist, holdings, or read history.
  */
 
 import type { WatchlistEntry } from "./types";
 
 const WATCHLIST_KEY = "kospi.watchlist.v1";
+const READ_ITEMS_KEY = "kospi.read-items.v1";
+
+/** Per-account localStorage key, so one visitor's data never loads for another. */
+function scopedKey(base: string, scope: string): string {
+  return `${base}::${scope}`;
+}
+
+/**
+ * Move a pre-per-account (unscoped) key onto the first account to sign in after
+ * this upgrade, so an existing visitor keeps their watchlist instead of starting
+ * empty. The legacy key is then removed so a second account on the same browser
+ * cannot adopt the same data.
+ */
+function adoptLegacyKey(base: string, scope: string): void {
+  try {
+    const target = scopedKey(base, scope);
+    if (window.localStorage.getItem(target) !== null) return;
+    const legacy = window.localStorage.getItem(base);
+    if (legacy === null) return;
+    window.localStorage.setItem(target, legacy);
+    window.localStorage.removeItem(base);
+  } catch {
+    // localStorage unavailable — nothing to migrate.
+  }
+}
 
 function isEntry(value: unknown): value is WatchlistEntry {
   if (!value || typeof value !== "object") return false;
@@ -25,10 +53,11 @@ export function watchlistKey(entry: { market: string; code: string }): string {
   return `${entry.market}:${entry.code}`;
 }
 
-/** Read the watchlist from localStorage, tolerating missing or invalid data. */
-export function loadWatchlist(): WatchlistEntry[] {
+/** Read an account's watchlist from localStorage, tolerating missing or invalid data. */
+export function loadWatchlist(scope: string): WatchlistEntry[] {
+  adoptLegacyKey(WATCHLIST_KEY, scope);
   try {
-    const raw = window.localStorage.getItem(WATCHLIST_KEY);
+    const raw = window.localStorage.getItem(scopedKey(WATCHLIST_KEY, scope));
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -45,10 +74,13 @@ export function loadWatchlist(): WatchlistEntry[] {
   }
 }
 
-/** Persist the watchlist to localStorage. */
-export function saveWatchlist(entries: WatchlistEntry[]): void {
+/** Persist an account's watchlist to localStorage. */
+export function saveWatchlist(scope: string, entries: WatchlistEntry[]): void {
   try {
-    window.localStorage.setItem(WATCHLIST_KEY, JSON.stringify(entries));
+    window.localStorage.setItem(
+      scopedKey(WATCHLIST_KEY, scope),
+      JSON.stringify(entries),
+    );
   } catch {
     // localStorage unavailable (private mode / quota) — keep state in memory.
   }
@@ -72,12 +104,11 @@ export function removeWatchlistEntry(
   return list.filter((item) => watchlistKey(item) !== key);
 }
 
-const READ_ITEMS_KEY = "kospi.read-items.v1";
-
-/** Read the set of feed issue ids the visitor has already opened. */
-export function loadReadIds(): Set<string> {
+/** Read the set of feed issue ids the account has already opened. */
+export function loadReadIds(scope: string): Set<string> {
+  adoptLegacyKey(READ_ITEMS_KEY, scope);
   try {
-    const raw = window.localStorage.getItem(READ_ITEMS_KEY);
+    const raw = window.localStorage.getItem(scopedKey(READ_ITEMS_KEY, scope));
     if (!raw) return new Set();
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return new Set();
@@ -89,10 +120,13 @@ export function loadReadIds(): Set<string> {
   }
 }
 
-/** Persist the set of opened feed issue ids. */
-export function saveReadIds(ids: Set<string>): void {
+/** Persist an account's set of opened feed issue ids. */
+export function saveReadIds(scope: string, ids: Set<string>): void {
   try {
-    window.localStorage.setItem(READ_ITEMS_KEY, JSON.stringify([...ids]));
+    window.localStorage.setItem(
+      scopedKey(READ_ITEMS_KEY, scope),
+      JSON.stringify([...ids]),
+    );
   } catch {
     // localStorage unavailable (private mode / quota) — keep state in memory.
   }

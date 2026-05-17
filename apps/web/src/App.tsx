@@ -748,17 +748,19 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [isBusy, setIsBusy] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(AUTO_REFRESH_SECONDS);
-  const [readIds, setReadIds] = useState<Set<string>>(() => loadReadIds());
+  const [readIds, setReadIds] = useState<Set<string>>(new Set());
 
   const markRead = useCallback((id: string) => {
+    if (!authUser) return;
+    const scope = String(authUser.id);
     setReadIds((prev) => {
       if (prev.has(id)) return prev;
       const next = new Set(prev);
       next.add(id);
-      saveReadIds(next);
+      saveReadIds(scope, next);
       return next;
     });
-  }, []);
+  }, [authUser]);
 
   const pushNotification = useCallback((input: NotificationInput) => {
     const createdAt = new Date().toISOString();
@@ -841,14 +843,12 @@ function App() {
   );
 
   const refresh = useCallback(async () => {
-    // The server holds the shared public collection universe; the personal
-    // watchlist and holdings come from this browser only.
+    // The server holds only the shared public collection universe.
     const serverSymbols = await api.listSymbols();
     const nextDetails = await Promise.all(
       serverSymbols.map((symbol) => api.getSymbol(symbol.id)),
     );
     setDetails(nextDetails);
-    setWatchlist(loadWatchlist());
   }, []);
 
   useEffect(() => {
@@ -867,6 +867,20 @@ function App() {
       )
       .finally(() => setIsLoading(false));
   }, [refresh, pushNotification, authUser]);
+
+  // The watchlist, holdings and read state live in this browser, scoped to the
+  // signed-in account: load this account's data on sign-in and drop it on
+  // sign-out so a shared browser never leaks data across accounts.
+  useEffect(() => {
+    if (!authUser) {
+      setWatchlist([]);
+      setReadIds(new Set());
+      return;
+    }
+    const scope = String(authUser.id);
+    setWatchlist(loadWatchlist(scope));
+    setReadIds(loadReadIds(scope));
+  }, [authUser]);
 
   // Load real daily closes for each symbol once details arrive; a per-symbol
   // failure just yields an empty series so the rest of the dashboard is fine.
@@ -972,10 +986,16 @@ function App() {
 
   async function handleRegister(state: RegisterState) {
     await runAction(async () => {
+      if (!authUser) return;
+      const scope = String(authUser.id);
       const entry = watchlistEntryFromRegistration(state);
-      saveWatchlist(upsertWatchlistEntry(loadWatchlist(), entry));
+      const nextWatchlist = upsertWatchlistEntry(loadWatchlist(scope), entry);
+      saveWatchlist(scope, nextWatchlist);
+      setWatchlist(nextWatchlist);
       // Register the symbol as a public collection target — identity only, no
-      // holdings ever leave the browser. A 409 means it already exists.
+      // holdings ever leave the browser. A 409 means it already exists, which
+      // is fine; any other failure means the server did not register it.
+      let serverRegistered = true;
       try {
         await api.createSymbol({
           market: entry.market,
@@ -984,16 +1004,26 @@ function App() {
           memo: null,
           holding: null,
         });
-      } catch {
-        // Symbol already in the shared public universe — nothing to do.
+      } catch (err) {
+        if (!(err instanceof ApiError && err.status === 409)) {
+          serverRegistered = false;
+        }
       }
       await refresh();
       setView("dashboard");
-      pushNotification({
-        tone: "success",
-        title: "종목 추가 완료",
-        message: `${entry.name} 종목이 대시보드에 추가되었습니다.`,
-      });
+      pushNotification(
+        serverRegistered
+          ? {
+              tone: "success",
+              title: "종목 추가 완료",
+              message: `${entry.name} 종목이 대시보드에 추가되었습니다.`,
+            }
+          : {
+              tone: "error",
+              title: "서버 등록 실패",
+              message: `${entry.name}을(를) 관심종목에 추가했지만 서버 수집 등록에 실패했습니다. 잠시 후 다시 시도해 주세요.`,
+            },
+      );
     }, {
       errorTitle: "종목 추가 실패",
     });
@@ -1034,7 +1064,7 @@ function App() {
     const [moved] = next.splice(fromIndex, 1);
     next.splice(toIndex, 0, moved);
     setWatchlist(next);
-    saveWatchlist(next);
+    if (authUser) saveWatchlist(String(authUser.id), next);
   }
 
   // Drop a card from the dashboard. The watchlist lives only in this browser,
@@ -1045,7 +1075,7 @@ function App() {
       code: stock.code,
     });
     setWatchlist(next);
-    saveWatchlist(next);
+    if (authUser) saveWatchlist(String(authUser.id), next);
     pushNotification({
       tone: "info",
       title: "종목 제거",
