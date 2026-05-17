@@ -116,7 +116,7 @@ type RelatedArticle = {
 };
 
 type FeedFilter = {
-  stockCode?: string | null;
+  stockCodes?: string[] | null;
   type?: IssueType | null;
   sentiment?: SentKey | null;
   minImportance?: number;
@@ -1049,7 +1049,7 @@ function App() {
   // The recent-arrival card passes the issue it is showing so the feed opens
   // with that exact item selected, not just the stock filtered.
   function goToFeed(stockCode?: string, issueId?: string) {
-    setFilter(stockCode ? { stockCode } : {});
+    setFilter(stockCode ? { stockCodes: [stockCode] } : {});
     setSelectedIssueId(issueId ?? null);
     setView("feed");
   }
@@ -1914,7 +1914,8 @@ function Feed({
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     const filtered = issues.filter((issue) => {
-      if (filter.stockCode && issue.stockCode !== filter.stockCode) return false;
+      if (filter.stockCodes?.length && !filter.stockCodes.includes(issue.stockCode))
+        return false;
       if (filter.type && issue.type !== filter.type) return false;
       if (filter.sentiment && issue.sentiment !== filter.sentiment) return false;
       if (filter.minImportance && issue.importance < filter.minImportance) return false;
@@ -1987,6 +1988,150 @@ function Feed({
   );
 }
 
+function StockFilterDropdown({
+  stocks,
+  selected,
+  onChange,
+}: {
+  stocks: ResearchStock[];
+  selected: string[];
+  onChange: (codes: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  // Close the popup on an outside click or the Escape key.
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (!wrapRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  // An empty selection is the "전체" mode: every stock passes the filter.
+  const isAll = selected.length === 0;
+
+  const visibleStocks = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return stocks;
+    return stocks.filter(
+      (stock) =>
+        stock.name.toLowerCase().includes(term) || stock.code.includes(term),
+    );
+  }, [stocks, search]);
+
+  // Checking every stock one by one collapses back to "전체" mode, since the
+  // two states filter to exactly the same issues.
+  function toggleStock(code: string) {
+    const next = selected.includes(code)
+      ? selected.filter((item) => item !== code)
+      : [...selected, code];
+    onChange(next.length === stocks.length ? [] : next);
+  }
+
+  // "전체" stays "전체"; a partial selection clears all the way back to "전체".
+  function toggleAll() {
+    if (!isAll) onChange([]);
+  }
+
+  let triggerLabel: ReactNode;
+  if (isAll) {
+    triggerLabel = <span className="muted">종목 선택</span>;
+  } else if (selected.length === 1) {
+    triggerLabel =
+      stocks.find((stock) => stock.code === selected[0])?.name ?? selected[0];
+  } else {
+    triggerLabel = (
+      <>
+        선택한 종목{" "}
+        <span className="combo-trigger-count">{selected.length}</span>
+      </>
+    );
+  }
+
+  return (
+    <div className="combo" ref={wrapRef}>
+      <button
+        type="button"
+        className="combo-trigger"
+        data-state={isAll ? "all" : "some"}
+        data-open={open ? "true" : "false"}
+        onClick={() => setOpen((value) => !value)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        {triggerLabel}
+        <ChevronDown className="chev" size={14} />
+      </button>
+      {open && (
+        <div className="combo-pop" role="listbox" aria-label="종목 필터">
+          <div className="combo-pop-head">
+            <div className="combo-search-wrap">
+              <Search size={14} />
+              <input
+                className="combo-search"
+                placeholder="종목 검색"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                autoFocus
+              />
+            </div>
+          </div>
+          <div className="combo-list">
+            {!search && (
+              <div
+                className="combo-item combo-item--all"
+                data-checked={isAll ? "true" : "false"}
+                data-indeterminate={isAll ? "false" : "true"}
+                onClick={toggleAll}
+                role="option"
+                aria-selected={isAll}
+              >
+                <span className="combo-check" aria-hidden="true" />
+                <span className="combo-name">전체</span>
+                <span className="combo-summary">{stocks.length}개 종목</span>
+              </div>
+            )}
+            {visibleStocks.map((stock) => {
+              const checked = selected.includes(stock.code);
+              return (
+                <div
+                  key={stock.id}
+                  className="combo-item"
+                  data-checked={checked ? "true" : "false"}
+                  onClick={() => toggleStock(stock.code)}
+                  role="option"
+                  aria-selected={checked}
+                >
+                  <span className="combo-check" aria-hidden="true" />
+                  <MktChip market={stock.market} />
+                  <span className="combo-name">{stock.name}</span>
+                  {stock.unreadCount > 0 && (
+                    <span className="combo-new-count">+{stock.unreadCount}</span>
+                  )}
+                </div>
+              );
+            })}
+            {search && visibleStocks.length === 0 && (
+              <div className="combo-empty">검색 결과가 없어요</div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FeedFilters({
   stocks,
   filter,
@@ -2034,24 +2179,20 @@ function FeedFilters({
       </div>
       <span className="filter-label">종목</span>
       <div className="filter-group">
-        <Chip active={!filter.stockCode} onClick={() => setFilter({ ...filter, stockCode: null })}>
+        <Chip
+          active={!filter.stockCodes?.length}
+          onClick={() => setFilter({ ...filter, stockCodes: null })}
+        >
           전체
         </Chip>
-        {stocks.slice(0, 6).map((stock) => (
-          <Chip
-            key={stock.id}
-            active={filter.stockCode === stock.code}
-            onClick={() =>
-              setFilter({ ...filter, stockCode: filter.stockCode === stock.code ? null : stock.code })
+        {stocks.length > 0 && (
+          <StockFilterDropdown
+            stocks={stocks}
+            selected={filter.stockCodes ?? []}
+            onChange={(codes) =>
+              setFilter({ ...filter, stockCodes: codes.length === 0 ? null : codes })
             }
-          >
-            {stock.name}
-          </Chip>
-        ))}
-        {stocks.length > 6 && (
-          <button className="chip chip--ghost" title="더 보기">
-            <ChevronDown size={12} />
-          </button>
+          />
         )}
       </div>
       <span className="divider" />
