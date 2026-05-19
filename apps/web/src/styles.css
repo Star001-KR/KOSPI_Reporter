@@ -601,7 +601,7 @@ a {
     transform var(--dur-fast) var(--ease);
 }
 
-.btn:hover {
+.btn:hover:not(:disabled) {
   border-color: var(--line-strong);
   background: var(--surface-2);
 }
@@ -616,7 +616,7 @@ a {
   color: var(--bg);
 }
 
-.btn--primary:hover {
+.btn--primary:hover:not(:disabled) {
   background: var(--ink);
   opacity: 0.9;
 }
@@ -2130,23 +2130,48 @@ a {
 
 .related-link {
   display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  border-bottom: 1px solid var(--line-soft);
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.related-select {
+  display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: var(--sp-3);
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   border: 0;
-  border-bottom: 1px solid var(--line-soft);
   background: transparent;
   color: var(--ink);
   padding: var(--sp-3) 0;
   text-align: left;
   cursor: pointer;
+  transition: color var(--dur-fast) var(--ease);
+}
+
+.related-select:hover .related-title {
+  color: var(--accent);
+}
+
+.related-open {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r-sm);
+  color: var(--ink-muted);
   transition:
     background var(--dur-fast) var(--ease),
     color var(--dur-fast) var(--ease);
 }
 
-.related-link:hover .related-title {
+.related-open:hover {
+  background: var(--surface-2);
   color: var(--accent);
 }
 
@@ -2190,6 +2215,35 @@ a {
   color: var(--ink-muted);
   font-family: var(--font-mono);
   font-size: var(--fs-10);
+}
+
+.related-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  background: transparent;
+  color: var(--ink-muted);
+  padding: var(--sp-3) 0;
+  font-size: var(--fs-12);
+  font-weight: 600;
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease);
+}
+
+.related-toggle:hover {
+  color: var(--accent);
+}
+
+.related-toggle .chev {
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.related-toggle[data-open="true"] .chev {
+  transform: rotate(180deg);
 }
 
 .actions {

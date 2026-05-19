@@ -206,6 +206,10 @@ const AUTO_REFRESH_SECONDS = 600;
 const RECENT_ARRIVAL_LIMIT = 6;
 const RECENT_ARRIVAL_INTERVAL_MS = 5000;
 
+// Reading-pane "묶인 뉴스" list: render this many bundled articles before
+// collapsing the remainder behind an expand toggle.
+const RELATED_COLLAPSE_LIMIT = 3;
+
 const orbitConfigs = [
   { r: 205, start: 138, period: 118 },
   { r: 140, start: 250, period: 96 },
@@ -512,14 +516,6 @@ function pickRepresentative(cluster: ResearchIssue[]): ResearchIssue {
   );
 }
 
-function hashString(value: string): string {
-  let hash = 0;
-  Array.from(value).forEach((char) => {
-    hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-  });
-  return hash.toString(36);
-}
-
 function buildClusterIssue(cluster: ResearchIssue[]): ResearchIssue {
   if (cluster.length === 1) {
     const issue = cluster[0];
@@ -535,14 +531,18 @@ function buildClusterIssue(cluster: ResearchIssue[]): ResearchIssue {
   const representative = pickRepresentative(sorted);
   const clusterSources = uniqueValues(sorted.map((issue) => issue.source));
   const relatedArticles = sorted.map((issue) => relatedArticleFromIssue(issue, issue.id === representative.id));
-  const clusterId = hashString(sorted.map((issue) => issue.id).sort().join("|"));
+  // The cluster id is its founding article — the member with the smallest
+  // itemId. itemId is monotonic, so later-collected articles never displace
+  // it: the id holds steady as related articles arrive, keeping read state
+  // and bookmarks attached. A preferred stock and its common stock cluster
+  // the same articles, so they share one founding article — and one id.
+  const founding = sorted.reduce((earliest, issue) =>
+    issue.itemId < earliest.itemId ? issue : earliest,
+  );
 
   return {
     ...representative,
-    // No stock prefix: a preferred stock and its common stock cluster the
-    // same articles (same clusterId), so a shared id lets read state and the
-    // unread count carry across both.
-    id: `cluster-${clusterId}`,
+    id: founding.id,
     occurredAt: sorted[0].occurredAt,
     collectedAt: sorted[0].collectedAt,
     sentiment: aggregateClusterSentiment(sorted, representative),
@@ -1968,6 +1968,10 @@ function Feed({
     });
   }, [issues, filter, query, bookmarkIds]);
   const selected = visible.find((issue) => issue.id === selectedIssueId) ?? visible[0] ?? null;
+  const selectedIndex = selected ? visible.findIndex((issue) => issue.id === selected.id) : -1;
+  const prevIssue = selectedIndex > 0 ? visible[selectedIndex - 1] : null;
+  const nextIssue =
+    selectedIndex >= 0 && selectedIndex < visible.length - 1 ? visible[selectedIndex + 1] : null;
 
   useEffect(() => {
     if (selected && selected.id !== selectedIssueId) {
@@ -2018,6 +2022,8 @@ function Feed({
           onToggleBookmark={() => {
             if (selected) toggleBookmark(selected.id);
           }}
+          onPrev={prevIssue ? () => setSelectedIssueId(prevIssue.id) : undefined}
+          onNext={nextIssue ? () => setSelectedIssueId(nextIssue.id) : undefined}
         />
       </div>
     </div>
@@ -2265,7 +2271,7 @@ function FeedFilters({
           setFilter({ ...filter, minImportance: (filter.minImportance ?? 0) >= 4 ? 0 : 4 })
         }
       >
-        중요도 4 이상
+        중요
       </Chip>
       <Chip
         ghost
@@ -2328,19 +2334,32 @@ function clusteredSourceLabel(issue: ResearchIssue): string {
   return `${issue.clusterSources[0]} 외 ${issue.clusterSources.length - 1}곳`;
 }
 
+// Collapsed "묶인 뉴스" view: keep the first RELATED_COLLAPSE_LIMIT articles,
+// but always include the active one so the current selection stays visible.
+function collapsedRelatedArticles(articles: RelatedArticle[], active: RelatedArticle): RelatedArticle[] {
+  const head = articles.slice(0, RELATED_COLLAPSE_LIMIT);
+  return head.some((article) => article.id === active.id) ? head : [...head, active];
+}
+
 function FeedReadingPane({
   issue,
   bookmarked,
   onToggleBookmark,
+  onPrev,
+  onNext,
 }: {
   issue: ResearchIssue | null;
   bookmarked: boolean;
   onToggleBookmark: () => void;
+  onPrev?: () => void;
+  onNext?: () => void;
 }) {
   const [activeArticleId, setActiveArticleId] = useState<string | null>(null);
+  const [relatedExpanded, setRelatedExpanded] = useState(false);
 
   useEffect(() => {
     setActiveArticleId(null);
+    setRelatedExpanded(false);
   }, [issue?.id]);
 
   if (!issue) {
@@ -2364,6 +2383,13 @@ function FeedReadingPane({
       ? issue.relatedArticles.find((article) => article.id === activeArticleId) ?? representativeArticle
       : representativeArticle;
   const articleRoleLabel = activeArticle.isRepresentative ? "대표" : "관련";
+
+  const relatedCollapsible = issue.relatedArticles.length > RELATED_COLLAPSE_LIMIT;
+  const visibleArticles =
+    relatedCollapsible && !relatedExpanded
+      ? collapsedRelatedArticles(issue.relatedArticles, activeArticle)
+      : issue.relatedArticles;
+  const relatedHiddenCount = issue.relatedArticles.length - visibleArticles.length;
 
   return (
     <div className="feed-pane">
@@ -2433,23 +2459,48 @@ function FeedReadingPane({
           <section>
             <h2>묶인 뉴스</h2>
             <div className="related-list">
-              {issue.relatedArticles.map((article) => (
-                <button
+              {visibleArticles.map((article) => (
+                <div
                   key={`${article.id}-${article.url}`}
-                  type="button"
                   className="related-link"
                   aria-current={activeArticle.id === article.id ? "true" : "false"}
-                  onClick={() => setActiveArticleId(article.id)}
                 >
-                  <span className="related-title-wrap">
-                    <span className="related-title">{article.title}</span>
-                    {article.isRepresentative && <span className="related-rep">대표</span>}
-                  </span>
-                  <span className="related-meta">
-                    {article.source} · {formatTime(article.occurredAt)}
-                  </span>
-                </button>
+                  <button
+                    type="button"
+                    className="related-select"
+                    onClick={() => setActiveArticleId(article.id)}
+                  >
+                    <span className="related-title-wrap">
+                      <span className="related-title">{article.title}</span>
+                      {article.isRepresentative && <span className="related-rep">대표</span>}
+                    </span>
+                    <span className="related-meta">
+                      {article.source} · {formatTime(article.occurredAt)}
+                    </span>
+                  </button>
+                  <a
+                    className="related-open"
+                    href={article.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    title="원문 새 탭"
+                  >
+                    <ArrowUpRight size={14} />
+                  </a>
+                </div>
               ))}
+              {(relatedExpanded || relatedHiddenCount > 0) && (
+                <button
+                  type="button"
+                  className="related-toggle"
+                  data-open={relatedExpanded ? "true" : "false"}
+                  aria-expanded={relatedExpanded}
+                  onClick={() => setRelatedExpanded((value) => !value)}
+                >
+                  {relatedExpanded ? "접기" : `펼치기 (+${relatedHiddenCount})`}
+                  <ChevronDown className="chev" size={14} />
+                </button>
+              )}
             </div>
           </section>
         )}
@@ -2472,10 +2523,17 @@ function FeedReadingPane({
           </a>
         </section>
         <div className="actions">
-          <Button icon={<ChevronLeft size={14} />}>이전</Button>
+          <Button icon={<ChevronLeft size={14} />} disabled={!onPrev} onClick={onPrev}>
+            이전
+          </Button>
           <span className="spacer" />
           <Button>메모 추가</Button>
-          <Button variant="primary" icon={<ArrowRight size={14} />}>
+          <Button
+            variant="primary"
+            icon={<ArrowRight size={14} />}
+            disabled={!onNext}
+            onClick={onNext}
+          >
             다음
           </Button>
         </div>

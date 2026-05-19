@@ -15,6 +15,7 @@ const WATCHLIST_KEY = "kospi.watchlist.v1";
 const READ_ITEMS_KEY = "kospi.read-items.v1";
 const THEME_KEY = "kospi.theme.v1";
 const BOOKMARK_KEY = "kospi.bookmarks.v1";
+const NOTES_KEY = "kospi.notes.v1";
 
 /** Per-account localStorage key, so one visitor's data never loads for another. */
 function scopedKey(base: string, scope: string): string {
@@ -155,6 +156,35 @@ export function saveBookmarkIds(scope: string, ids: Set<string>): void {
     window.localStorage.setItem(
       scopedKey(BOOKMARK_KEY, scope),
       JSON.stringify([...ids]),
+    );
+  } catch {
+    // localStorage unavailable (private mode / quota) — keep state in memory.
+  }
+}
+
+/** Read the account's feed notes, keyed by feed issue id. */
+export function loadNotes(scope: string): Record<string, string> {
+  try {
+    const raw = window.localStorage.getItem(scopedKey(NOTES_KEY, scope));
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const notes: Record<string, string> = {};
+    for (const [id, text] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof text === "string") notes[id] = text;
+    }
+    return notes;
+  } catch {
+    return {};
+  }
+}
+
+/** Persist an account's feed notes, keyed by feed issue id. */
+export function saveNotes(scope: string, notes: Record<string, string>): void {
+  try {
+    window.localStorage.setItem(
+      scopedKey(NOTES_KEY, scope),
+      JSON.stringify(notes),
     );
   } catch {
     // localStorage unavailable (private mode / quota) — keep state in memory.

@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <title>KOSPI Reporter</title>
+  <defs>
+    <linearGradient id="kr-tile" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#d4ac59" />
+      <stop offset="1" stop-color="#b5873a" />
+    </linearGradient>
+    <radialGradient id="kr-planet" cx="37%" cy="32%" r="80%">
+      <stop offset="0" stop-color="#342e23" />
+      <stop offset="1" stop-color="#1b1711" />
+    </radialGradient>
+  </defs>
+
+  <!-- background tile -->
+  <rect width="64" height="64" rx="13" fill="url(#kr-tile)" />
+
+  <!-- orbiting ring (behind the planet) -->
+  <ellipse cx="32" cy="33" rx="27.5" ry="9" fill="none"
+           stroke="#fef4dc" stroke-width="3.8"
+           transform="rotate(-22 32 33)" />
+
+  <!-- planet -->
+  <circle cx="32" cy="32" r="17" fill="url(#kr-planet)" />
+
+  <!-- letter k -->
+  <text x="32" y="34" text-anchor="middle" dominant-baseline="central"
+        font-family="Georgia, 'Times New Roman', 'Noto Serif KR', serif"
+        font-size="28" font-weight="700" fill="#faf2de">k</text>
+</svg>
