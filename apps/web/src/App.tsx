@@ -18,6 +18,7 @@ import {
   RefreshCw,
   Search,
   Sparkles,
+  StickyNote,
   Sun,
   X,
 } from "lucide-react";
@@ -28,11 +29,13 @@ import { ApiError, api } from "./api";
 import {
   deviceTheme,
   loadBookmarkIds,
+  loadNotes,
   loadReadIds,
   loadTheme,
   loadWatchlist,
   removeWatchlistEntry,
   saveBookmarkIds,
+  saveNotes,
   saveReadIds,
   saveTheme,
   saveWatchlist,
@@ -756,6 +759,7 @@ function App() {
   const [secondsLeft, setSecondsLeft] = useState(AUTO_REFRESH_SECONDS);
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
   const [bookmarkIds, setBookmarkIds] = useState<Set<string>>(new Set());
+  const [notes, setNotes] = useState<Record<string, string>>({});
 
   const markRead = useCallback((id: string) => {
     if (!authUser) return;
@@ -777,6 +781,18 @@ function App() {
       if (next.has(id)) next.delete(id);
       else next.add(id);
       saveBookmarkIds(scope, next);
+      return next;
+    });
+  }, [authUser]);
+
+  const saveIssueNote = useCallback((id: string, text: string) => {
+    if (!authUser) return;
+    const scope = String(authUser.id);
+    setNotes((prev) => {
+      const next = { ...prev };
+      if (text) next[id] = text;
+      else delete next[id];
+      saveNotes(scope, next);
       return next;
     });
   }, [authUser]);
@@ -895,12 +911,18 @@ function App() {
       setWatchlist([]);
       setReadIds(new Set());
       setBookmarkIds(new Set());
+      setNotes({});
+      // Feed view state isn't account data, but a stale filter must not outlive
+      // a sign-out — it would silently empty the next account's feed.
+      setFilter({});
+      setSelectedIssueId(null);
       return;
     }
     const scope = String(authUser.id);
     setWatchlist(loadWatchlist(scope));
     setReadIds(loadReadIds(scope));
     setBookmarkIds(loadBookmarkIds(scope));
+    setNotes(loadNotes(scope));
     // Theme is a display preference, not private data, so it is restored on
     // sign-in but left untouched on sign-out (no flash back to light).
     setTheme(loadTheme(scope));
@@ -1166,6 +1188,8 @@ function App() {
             markRead={markRead}
             bookmarkIds={bookmarkIds}
             toggleBookmark={toggleBookmark}
+            notes={notes}
+            saveIssueNote={saveIssueNote}
           />
         )}
       </main>
@@ -1920,6 +1944,8 @@ function Feed({
   markRead,
   bookmarkIds,
   toggleBookmark,
+  notes,
+  saveIssueNote,
 }: {
   stocks: ResearchStock[];
   issues: ResearchIssue[];
@@ -1931,6 +1957,8 @@ function Feed({
   markRead: (id: string) => void;
   bookmarkIds: Set<string>;
   toggleBookmark: (id: string) => void;
+  notes: Record<string, string>;
+  saveIssueNote: (id: string, text: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const emptyMessage =
@@ -2021,6 +2049,10 @@ function Feed({
           bookmarked={selected !== null && bookmarkIds.has(selected.id)}
           onToggleBookmark={() => {
             if (selected) toggleBookmark(selected.id);
+          }}
+          note={selected ? notes[selected.id] ?? "" : ""}
+          onSaveNote={(text) => {
+            if (selected) saveIssueNote(selected.id, text);
           }}
           onPrev={prevIssue ? () => setSelectedIssueId(prevIssue.id) : undefined}
           onNext={nextIssue ? () => setSelectedIssueId(nextIssue.id) : undefined}
@@ -2345,12 +2377,16 @@ function FeedReadingPane({
   issue,
   bookmarked,
   onToggleBookmark,
+  note,
+  onSaveNote,
   onPrev,
   onNext,
 }: {
   issue: ResearchIssue | null;
   bookmarked: boolean;
   onToggleBookmark: () => void;
+  note: string;
+  onSaveNote: (text: string) => void;
   onPrev?: () => void;
   onNext?: () => void;
 }) {
@@ -2522,12 +2558,12 @@ function FeedReadingPane({
             </span>
           </a>
         </section>
+        <FeedNoteSection key={issue.id} note={note} onSave={onSaveNote} />
         <div className="actions">
           <Button icon={<ChevronLeft size={14} />} disabled={!onPrev} onClick={onPrev}>
             이전
           </Button>
           <span className="spacer" />
-          <Button>메모 추가</Button>
           <Button
             variant="primary"
             icon={<ArrowRight size={14} />}
@@ -2539,6 +2575,71 @@ function FeedReadingPane({
         </div>
       </article>
     </div>
+  );
+}
+
+function FeedNoteSection({
+  note,
+  onSave,
+}: {
+  note: string;
+  onSave: (text: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  function startEditing() {
+    setDraft(note);
+    setEditing(true);
+  }
+
+  function save() {
+    onSave(draft.trim());
+    setEditing(false);
+  }
+
+  return (
+    <section className="feed-note">
+      <h2>
+        <StickyNote size={11} /> 메모
+      </h2>
+      {editing ? (
+        <div className="note-editor">
+          <textarea
+            className="note-input"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            placeholder="이 이슈에 대한 메모를 남겨보세요"
+            rows={4}
+            autoFocus
+          />
+          <div className="note-actions">
+            <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
+              취소
+            </Button>
+            <Button size="sm" variant="primary" onClick={save}>
+              저장
+            </Button>
+          </div>
+        </div>
+      ) : note ? (
+        <div className="note-saved">
+          <p className="note-text">{note}</p>
+          <div className="note-actions">
+            <Button size="sm" variant="ghost" onClick={() => onSave("")}>
+              삭제
+            </Button>
+            <Button size="sm" onClick={startEditing}>
+              편집
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <button type="button" className="note-add" onClick={startEditing}>
+          <Plus size={14} /> 메모 추가
+        </button>
+      )}
+    </section>
   );
 }
 

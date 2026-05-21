@@ -2246,6 +2246,82 @@ a {
   transform: rotate(180deg);
 }
 
+.note-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  border: 1px dashed var(--line);
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--ink-muted);
+  padding: var(--sp-4);
+  font-size: var(--fs-13);
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.note-add:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.note-editor,
+.note-saved {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.note-saved {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  padding: var(--sp-4);
+}
+
+.note-input {
+  width: 100%;
+  min-height: 90px;
+  resize: vertical;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--ink);
+  padding: var(--sp-3);
+  font-family: inherit;
+  font-size: var(--fs-14);
+  line-height: 1.6;
+}
+
+.note-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.note-input::placeholder {
+  color: var(--ink-muted);
+}
+
+.note-text {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--fs-15);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  text-wrap: pretty;
+}
+
+.note-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+}
+
 .actions {
   display: flex;
   align-items: center;
