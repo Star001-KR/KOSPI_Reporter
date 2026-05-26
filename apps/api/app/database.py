@@ -30,6 +30,7 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_symbol_owner_column()
     _ensure_one_running_collection_index()
+    _ensure_news_ai_summary_columns()
 
 
 def _ensure_symbol_owner_column() -> None:
@@ -81,6 +82,31 @@ def _ensure_one_running_collection_index() -> None:
                 "WHERE status = 'running' AND run_type = 'collection'"
             )
         )
+
+
+def _ensure_news_ai_summary_columns() -> None:
+    """Add the AI-summary columns to ``news_items`` for databases predating them.
+
+    The columns are nullable so existing rows stay valid without a backfill;
+    they pick up summaries on the next collection or on first read.
+    """
+    inspector = inspect(engine)
+    if "news_items" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("news_items")}
+    additions = [
+        ("ai_summary", "TEXT"),
+        ("ai_summary_model", "VARCHAR(80)"),
+        ("ai_summary_at", "DATETIME"),
+    ]
+    missing = [(name, ddl) for name, ddl in additions if name not in columns]
+    if not missing:
+        return
+    with engine.begin() as connection:
+        for name, ddl in missing:
+            connection.execute(
+                text(f"ALTER TABLE news_items ADD COLUMN {name} {ddl}")
+            )
 
 
 def get_db() -> Generator[Session, None, None]:

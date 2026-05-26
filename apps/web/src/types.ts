@@ -64,6 +64,9 @@ export interface NewsItem {
   canonical_url: string;
   published_at: string | null;
   collected_at: string;
+  ai_summary: string | null;
+  ai_summary_model: string | null;
+  ai_summary_at: string | null;
 }
 
 export interface Disclosure {

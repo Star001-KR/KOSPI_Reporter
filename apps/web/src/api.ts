@@ -1,6 +1,7 @@
 import type {
   AuthUser,
   DailyPrice,
+  NewsItem,
   PortfolioBrief,
   SymbolDetail,
   SymbolLookupResult,
@@ -90,5 +91,12 @@ export const api = {
   deleteSymbol: (id: number) =>
     request<void>(`/api/symbols/${id}`, {
       method: "DELETE",
+    }),
+  // Lazy on-demand AI summary for a news item that was not summarized
+  // eagerly at collection time. The server caches the result, so calling
+  // again just returns whatever is already stored.
+  generateNewsAiSummary: (newsId: number) =>
+    request<NewsItem>(`/api/news/${newsId}/ai-summary`, {
+      method: "POST",
     }),
 };

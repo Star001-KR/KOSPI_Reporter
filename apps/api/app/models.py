@@ -203,6 +203,9 @@ class NewsItem(Base):
         DateTime(timezone=True), default=utcnow, nullable=False
     )
     raw_payload: Mapped[dict | None] = mapped_column(JSON)
+    ai_summary: Mapped[str | None] = mapped_column(Text)
+    ai_summary_model: Mapped[str | None] = mapped_column(String(80))
+    ai_summary_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     symbol: Mapped[Symbol] = relationship(back_populates="news_items")
 

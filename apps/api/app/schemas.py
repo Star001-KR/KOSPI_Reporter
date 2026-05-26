@@ -185,6 +185,9 @@ class NewsItemRead(BaseModel):
     canonical_url: str
     published_at: datetime | None = None
     collected_at: datetime
+    ai_summary: str | None = None
+    ai_summary_model: str | None = None
+    ai_summary_at: datetime | None = None
 
 
 class DisclosureRead(BaseModel):

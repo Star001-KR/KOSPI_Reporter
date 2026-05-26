@@ -93,6 +93,7 @@ type ResearchIssue = {
   sentiment: SentKey;
   importance: number;
   summary: string;
+  aiSummary: string | null;
   impact: string;
   rationale: string;
   keywords: string[];
@@ -113,6 +114,7 @@ type RelatedArticle = {
   sentiment: SentKey;
   importance: number;
   summary: string;
+  aiSummary: string | null;
   impact: string;
   rationale: string;
   keywords: string[];
@@ -470,6 +472,7 @@ function relatedArticleFromIssue(issue: ResearchIssue, isRepresentative = false)
     sentiment: issue.sentiment,
     importance: issue.importance,
     summary: issue.summary,
+    aiSummary: issue.aiSummary,
     impact: issue.impact,
     rationale: issue.rationale,
     keywords: issue.keywords,
@@ -610,6 +613,7 @@ function buildIssues(details: SymbolDetail[]): ResearchIssue[] {
         sentiment: toSentKey(analysis?.sentiment),
         importance: analysis?.importance ?? 0,
         summary: analysis?.summary ?? item.summary ?? "요약 대기 중입니다.",
+        aiSummary: item.ai_summary,
         impact: analysis?.portfolio_impact ?? "포트폴리오 영향 분석 대기 중입니다.",
         rationale: analysis?.rationale ?? "분석 근거가 아직 생성되지 않았습니다.",
         keywords: analysisKeywords(analysis),
@@ -637,6 +641,7 @@ function buildIssues(details: SymbolDetail[]): ResearchIssue[] {
         sentiment: toSentKey(analysis?.sentiment),
         importance: analysis?.importance ?? 0,
         summary: analysis?.summary ?? `${item.report_name} 공시가 수집되었습니다.`,
+        aiSummary: null,
         impact: analysis?.portfolio_impact ?? "공시 영향 분석 대기 중입니다.",
         rationale: analysis?.rationale ?? `접수번호 ${item.rcept_no}`,
         keywords: analysisKeywords(analysis),
@@ -904,6 +909,34 @@ function App() {
       serverSymbols.map((symbol) => api.getSymbol(symbol.id)),
     );
     setDetails(nextDetails);
+  }, []);
+
+  // Lazy AI summary for a news item that was not summarized eagerly at
+  // collection time. The server caches the result, so this only spends tokens
+  // on the first read; the response is merged into the loaded details so the
+  // reading pane re-renders with the new summary. The promise resolves either
+  // way so the caller can clear its "loading" mark — the UI just falls back
+  // to the rule-based summary on failure or when no key is configured.
+  const requestNewsAiSummary = useCallback(async (newsItemId: number) => {
+    try {
+      const updated = await api.generateNewsAiSummary(newsItemId);
+      setDetails((prev) =>
+        prev.map((detail) => {
+          const hasItem = detail.news_items.some(
+            (entry) => entry.item.id === newsItemId,
+          );
+          if (!hasItem) return detail;
+          return {
+            ...detail,
+            news_items: detail.news_items.map((entry) =>
+              entry.item.id === newsItemId ? { ...entry, item: updated } : entry,
+            ),
+          };
+        }),
+      );
+    } catch {
+      // Stay silent — the UI keeps showing the rule-based fallback.
+    }
   }, []);
 
   // When the auto-countdown reaches zero, do exactly one DB re-poll. The
@@ -1220,6 +1253,7 @@ function App() {
             toggleBookmark={toggleBookmark}
             notes={notes}
             saveIssueNote={saveIssueNote}
+            onRequestAiSummary={requestNewsAiSummary}
           />
         )}
       </main>
@@ -2005,6 +2039,7 @@ function Feed({
   toggleBookmark,
   notes,
   saveIssueNote,
+  onRequestAiSummary,
 }: {
   stocks: ResearchStock[];
   issues: ResearchIssue[];
@@ -2018,6 +2053,7 @@ function Feed({
   toggleBookmark: (id: string) => void;
   notes: Record<string, string>;
   saveIssueNote: (id: string, text: string) => void;
+  onRequestAiSummary: (newsItemId: number) => Promise<void>;
 }) {
   const [query, setQuery] = useState("");
   const emptyMessage =
@@ -2115,6 +2151,7 @@ function Feed({
           }}
           onPrev={prevIssue ? () => setSelectedIssueId(prevIssue.id) : undefined}
           onNext={nextIssue ? () => setSelectedIssueId(nextIssue.id) : undefined}
+          onRequestAiSummary={onRequestAiSummary}
         />
       </div>
     </div>
@@ -2440,6 +2477,7 @@ function FeedReadingPane({
   onSaveNote,
   onPrev,
   onNext,
+  onRequestAiSummary,
 }: {
   issue: ResearchIssue | null;
   bookmarked: boolean;
@@ -2448,9 +2486,13 @@ function FeedReadingPane({
   onSaveNote: (text: string) => void;
   onPrev?: () => void;
   onNext?: () => void;
+  onRequestAiSummary: (newsItemId: number) => Promise<void>;
 }) {
   const [activeArticleId, setActiveArticleId] = useState<string | null>(null);
   const [relatedExpanded, setRelatedExpanded] = useState(false);
+  // Items currently being summarized — keeps the spinner pinned and stops the
+  // effect from firing the same request twice while the response is in flight.
+  const [pendingAiIds, setPendingAiIds] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     setActiveArticleId(null);
@@ -2485,6 +2527,44 @@ function FeedReadingPane({
       ? collapsedRelatedArticles(issue.relatedArticles, activeArticle)
       : issue.relatedArticles;
   const relatedHiddenCount = issue.relatedArticles.length - visibleArticles.length;
+
+  // Trigger an on-demand AI summary the first time a news article is opened
+  // without one — the server-side eager pass only covers the latest few per
+  // symbol, so anything older or a bundled "관련" article lands here. Only
+  // news rows are summarized; disclosures still rely on the rule-based path.
+  const activeNewsItemId = issue.type === "news" ? activeArticle.itemId : null;
+  const activeAiSummary = activeArticle.aiSummary;
+  const isAiPending = activeNewsItemId !== null && pendingAiIds.has(activeNewsItemId);
+  useEffect(() => {
+    if (activeNewsItemId === null) return;
+    if (activeAiSummary) return;
+    if (pendingAiIds.has(activeNewsItemId)) return;
+    const newsItemId = activeNewsItemId;
+    setPendingAiIds((prev) => {
+      const next = new Set(prev);
+      next.add(newsItemId);
+      return next;
+    });
+    // Always clear the pending mark when the request settles — on success the
+    // updated row arrives via setDetails, on failure (or when no API key is
+    // configured) the row stays unchanged and the section reverts to the
+    // rule-based fallback label instead of spinning forever.
+    onRequestAiSummary(newsItemId).finally(() => {
+      setPendingAiIds((prev) => {
+        if (!prev.has(newsItemId)) return prev;
+        const next = new Set(prev);
+        next.delete(newsItemId);
+        return next;
+      });
+    });
+  }, [activeNewsItemId, activeAiSummary, pendingAiIds, onRequestAiSummary]);
+
+  const aiSummaryText = activeAiSummary ?? activeArticle.summary;
+  const aiSummaryStatus: "ready" | "loading" | "fallback" = activeAiSummary
+    ? "ready"
+    : isAiPending
+      ? "loading"
+      : "fallback";
 
   return (
     <div className="feed-pane">
@@ -2543,8 +2623,14 @@ function FeedReadingPane({
         <section>
           <h2>
             <Sparkles size={11} /> AI 요약
+            {aiSummaryStatus === "loading" && (
+              <span className="muted"> · 생성 중…</span>
+            )}
+            {aiSummaryStatus === "fallback" && (
+              <span className="muted"> · 원문 요약</span>
+            )}
           </h2>
-          <p className="summary">{activeArticle.summary}</p>
+          <p className="summary">{aiSummaryText}</p>
         </section>
         <section>
           <h2>포트폴리오 영향 분석</h2>

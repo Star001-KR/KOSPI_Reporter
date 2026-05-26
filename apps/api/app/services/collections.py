@@ -23,8 +23,10 @@ from kospi_core import Analyzer, RuleBasedAnalyzer
 
 from app.config import get_settings
 from app.models import CollectionRun, Symbol, utcnow
+from app.services.ai_summarizer import Summarizer
 from app.services.analyzer import analyze_targets
 from app.services.naver_news import NaverNewsError, collect_news_for_symbols
+from app.services.news_summary import summarize_recent_for_symbols
 from app.services.opendart import (
     OpenDartError,
     collect_disclosures_for_symbols,
@@ -106,6 +108,7 @@ def run_collection(
     news_fetcher=None,
     price_fetcher=None,
     analyzer: Analyzer | None = None,
+    ai_summarizer: Summarizer | None = None,
 ) -> CollectionRun:
     """Run the requested collection steps as one :class:`CollectionRun`.
 
@@ -189,6 +192,22 @@ def run_collection(
                 db.rollback()
                 step_failed = True
                 notes.append(f"뉴스 수집 실패: {exc}")
+            else:
+                # Eagerly summarize the most recent news per symbol so the
+                # reading pane has a real AI summary ready on first view. A
+                # missing API key turns this into a no-op (see _NullSummarizer);
+                # any other LLM failure is logged and the row keeps its
+                # rule-based fallback.
+                eager_count = settings.ai_summary_eager_per_symbol
+                if eager_count > 0:
+                    summarized = summarize_recent_for_symbols(
+                        db,
+                        [symbol.id for symbol in symbols],
+                        per_symbol=eager_count,
+                        summarizer=ai_summarizer,
+                    )
+                    if summarized:
+                        notes.append(f"AI 요약 {summarized}건")
 
         if options.include_prices:
             # Prices have no auth/quota step that could fail before the loop,

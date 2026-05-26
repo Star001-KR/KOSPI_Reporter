@@ -26,6 +26,9 @@ class Settings:
     opendart_api_key: str | None
     naver_client_id: str | None
     naver_client_secret: str | None
+    anthropic_api_key: str | None
+    ai_summary_model: str
+    ai_summary_eager_per_symbol: int
     google_oauth_client_id: str | None
     google_oauth_client_secret: str | None
     google_oauth_redirect_uri: str
@@ -51,6 +54,13 @@ class Settings:
             opendart_api_key=os.getenv("OPENDART_API_KEY") or None,
             naver_client_id=os.getenv("NAVER_CLIENT_ID") or None,
             naver_client_secret=os.getenv("NAVER_CLIENT_SECRET") or None,
+            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
+            ai_summary_model=os.getenv(
+                "AI_SUMMARY_MODEL", "claude-haiku-4-5-20251001"
+            ),
+            ai_summary_eager_per_symbol=int(
+                os.getenv("AI_SUMMARY_EAGER_PER_SYMBOL", "3")
+            ),
             google_oauth_client_id=os.getenv("GOOGLE_OAUTH_CLIENT_ID") or None,
             google_oauth_client_secret=os.getenv("GOOGLE_OAUTH_CLIENT_SECRET") or None,
             google_oauth_redirect_uri=os.getenv(
