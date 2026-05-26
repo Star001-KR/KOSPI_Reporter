@@ -1,14 +1,18 @@
 """Tests for the AI-summary persistence layer and lazy endpoint.
 
-These cover the boundary between the Anthropic-backed summarizer and the
-collection/read paths. The LLM itself is stubbed with a fake Summarizer so the
-tests are deterministic and run offline.
+These cover the boundary between the Claude-CLI-backed summarizer and the
+collection/read paths. Subprocess invocation is stubbed in the CLI-adapter
+tests, and the persistence layer uses a fake Summarizer so everything runs
+offline and deterministically.
 """
 
 from __future__ import annotations
 
+import subprocess
 import unittest
 from dataclasses import dataclass, field
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -19,7 +23,11 @@ from fastapi import HTTPException
 from app.database import Base
 from app.models import NewsItem, Symbol
 from app.routers.news import generate_ai_summary
-from app.services.ai_summarizer import _NullSummarizer
+from app.services.ai_summarizer import (
+    ClaudeCodeSummarizer,
+    _NullSummarizer,
+    get_summarizer,
+)
 from app.services.collections import CollectionOptions, run_collection
 from app.services.news_summary import (
     ensure_ai_summary,
@@ -106,12 +114,120 @@ class _DbTestCase(unittest.TestCase):
 
 class NullSummarizerTests(unittest.TestCase):
     def test_null_summarizer_returns_none(self) -> None:
-        # When ANTHROPIC_API_KEY is unset, get_summarizer hands back a no-op
-        # adapter; calling it must never raise and must produce no summary.
+        # When the claude CLI is not on PATH, get_summarizer hands back a
+        # no-op adapter; calling it must never raise and must produce no
+        # summary.
         result = _NullSummarizer().summarize(
             symbol_name="삼성전자", title="x", body=None
         )
         self.assertIsNone(result)
+
+
+class ClaudeCodeSummarizerTests(unittest.TestCase):
+    """Subprocess wrapping around ``claude --print`` is mocked here.
+
+    The real CLI is never invoked in the test suite — we just verify the
+    adapter assembles the right command, returns stdout on success, and
+    swallows every documented failure mode (non-zero exit, timeout, CLI not
+    installed) into a None result.
+    """
+
+    def _summarizer(self) -> ClaudeCodeSummarizer:
+        return ClaudeCodeSummarizer(
+            model="claude-haiku-4-5-20251001",
+            cli_path="claude",
+            timeout_seconds=5.0,
+        )
+
+    def test_passes_prompt_and_returns_stdout(self) -> None:
+        captured: dict = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["kwargs"] = kwargs
+            return SimpleNamespace(returncode=0, stdout="요약 결과\n", stderr="")
+
+        with patch("subprocess.run", side_effect=fake_run):
+            result = self._summarizer().summarize(
+                symbol_name="삼성전자",
+                title="실적 발표",
+                body="3분기 영업이익 증가",
+            )
+
+        self.assertEqual(result, "요약 결과")
+        cmd = captured["cmd"]
+        # Sanity-check the flags we depend on: print mode, model, no tools,
+        # explicit system prompt, no on-disk session.
+        self.assertEqual(cmd[0], "claude")
+        self.assertIn("--print", cmd)
+        self.assertIn("--model", cmd)
+        self.assertIn("claude-haiku-4-5-20251001", cmd)
+        self.assertIn("--tools", cmd)
+        self.assertIn("--no-session-persistence", cmd)
+        # Last positional must be the assembled user prompt referencing the
+        # symbol and title so the model has the right context.
+        self.assertIn("삼성전자", cmd[-1])
+        self.assertIn("실적 발표", cmd[-1])
+
+    def test_non_zero_exit_returns_none(self) -> None:
+        with patch(
+            "subprocess.run",
+            return_value=SimpleNamespace(
+                returncode=1, stdout="", stderr="auth required"
+            ),
+        ):
+            result = self._summarizer().summarize(
+                symbol_name="삼성전자", title="x", body=None
+            )
+        self.assertIsNone(result)
+
+    def test_timeout_returns_none(self) -> None:
+        def raise_timeout(*_a, **_kw):
+            raise subprocess.TimeoutExpired(cmd="claude", timeout=5.0)
+
+        with patch("subprocess.run", side_effect=raise_timeout):
+            result = self._summarizer().summarize(
+                symbol_name="삼성전자", title="x", body=None
+            )
+        self.assertIsNone(result)
+
+    def test_missing_cli_returns_none(self) -> None:
+        def raise_missing(*_a, **_kw):
+            raise FileNotFoundError(2, "No such file", "claude")
+
+        with patch("subprocess.run", side_effect=raise_missing):
+            result = self._summarizer().summarize(
+                symbol_name="삼성전자", title="x", body=None
+            )
+        self.assertIsNone(result)
+
+    def test_empty_stdout_returns_none(self) -> None:
+        # Whitespace-only response is treated as no summary so the UI falls
+        # back to the rule-based description instead of rendering a blank.
+        with patch(
+            "subprocess.run",
+            return_value=SimpleNamespace(returncode=0, stdout="   \n", stderr=""),
+        ):
+            result = self._summarizer().summarize(
+                symbol_name="삼성전자", title="x", body=None
+            )
+        self.assertIsNone(result)
+
+
+class GetSummarizerTests(unittest.TestCase):
+    def test_returns_null_when_cli_missing(self) -> None:
+        with patch("app.services.ai_summarizer.shutil.which", return_value=None):
+            summarizer = get_summarizer()
+        self.assertIsInstance(summarizer, _NullSummarizer)
+
+    def test_returns_claude_summarizer_when_cli_present(self) -> None:
+        with patch(
+            "app.services.ai_summarizer.shutil.which",
+            return_value="/usr/local/bin/claude",
+        ):
+            summarizer = get_summarizer()
+        self.assertIsInstance(summarizer, ClaudeCodeSummarizer)
+        self.assertEqual(summarizer._cli_path, "/usr/local/bin/claude")
 
 
 class EnsureAiSummaryTests(_DbTestCase):

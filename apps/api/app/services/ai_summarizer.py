@@ -1,9 +1,13 @@
 """LLM-backed news summarizer.
 
-Generates a short Korean summary for a collected news item using Anthropic's
-Claude Haiku model. Designed to be safe to call even when an API key is not
-configured: every public entrypoint returns ``None`` instead of raising, so a
-missing key, network blip, or rate-limit hiccup never breaks collection or the
+Generates a short Korean summary for a collected news item by shelling out to
+the locally installed Claude Code CLI in ``--print`` mode. Using the CLI means
+the feature runs against the user's Claude subscription (OAuth) instead of a
+separate Anthropic API key, with one trade-off: the API server must run on the
+machine where ``claude login`` has been completed.
+
+Every public entrypoint returns ``None`` instead of raising, so a missing CLI,
+expired login, network blip, or timeout never breaks collection or the
 user-facing fallback to ``NewsItem.summary``.
 
 Persistence lives in :mod:`app.services.news_summary` — this module is purely
@@ -14,6 +18,8 @@ the prompt-to-text adapter so callers can swap in another LLM by implementing
 from __future__ import annotations
 
 import logging
+import shutil
+import subprocess
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -22,9 +28,13 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 
 # Trim raw bodies before sending — Naver descriptions are short, but a defensive
-# cap keeps a future longer source from blowing up token usage.
+# cap keeps a future longer source from blowing up the prompt.
 _MAX_INPUT_CHARS = 1200
-_MAX_OUTPUT_TOKENS = 520
+
+# Default upper bound on a single CLI call. Generous enough for Haiku's first
+# token + a 4-5 line response over OAuth; tightened in tests via the timeout
+# constructor argument.
+_DEFAULT_TIMEOUT_SECONDS = 90.0
 
 _SYSTEM_PROMPT = (
     "당신은 한국 주식 투자자를 위한 뉴스 요약가입니다. "
@@ -47,7 +57,7 @@ class Summarizer(Protocol):
 
 @dataclass
 class _NullSummarizer:
-    """Returned when no API key is configured — every call is a no-op."""
+    """Returned when no usable backend is found — every call is a no-op."""
 
     model_name: str = "disabled"
 
@@ -57,41 +67,64 @@ class _NullSummarizer:
         return None
 
 
-class AnthropicSummarizer:
-    """Summarizer backed by the Anthropic Messages API.
+class ClaudeCodeSummarizer:
+    """Summarizer that pipes prompts through the local ``claude`` CLI.
 
-    Errors are logged and swallowed so a failing request never propagates up
-    into the collection pipeline or an API handler.
+    Runs ``claude --print`` as a subprocess with tools disabled and a custom
+    system prompt, so each call is a one-shot text generation against the
+    user's logged-in Claude subscription. Errors and non-zero exits are
+    logged and swallowed so the caller falls back to the rule-based summary.
     """
 
-    def __init__(self, *, api_key: str, model: str) -> None:
-        # Imported lazily so the rest of the app still loads when the
-        # ``anthropic`` package is not installed (tests, CI without the dep).
-        from anthropic import Anthropic
-
-        self._client = Anthropic(api_key=api_key)
+    def __init__(
+        self,
+        *,
+        model: str,
+        cli_path: str = "claude",
+        timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
+    ) -> None:
         self.model_name = model
+        self._cli_path = cli_path
+        self._timeout = timeout_seconds
 
     def summarize(
         self, *, symbol_name: str, title: str, body: str | None
     ) -> str | None:
         prompt = _build_prompt(symbol_name=symbol_name, title=title, body=body)
         try:
-            response = self._client.messages.create(
-                model=self.model_name,
-                max_tokens=_MAX_OUTPUT_TOKENS,
-                system=_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": prompt}],
+            result = subprocess.run(
+                [
+                    self._cli_path,
+                    "--print",
+                    "--model", self.model_name,
+                    "--tools", "",
+                    "--output-format", "text",
+                    "--no-session-persistence",
+                    "--system-prompt", _SYSTEM_PROMPT,
+                    prompt,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=self._timeout,
             )
-        except Exception:  # broad: any LLM failure must fall back to None
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
             logger.warning(
-                "AI summary failed for symbol=%s title=%r",
+                "claude CLI summary failed for symbol=%s title=%r",
                 symbol_name,
                 title[:80],
                 exc_info=True,
             )
             return None
-        return _extract_text(response)
+        if result.returncode != 0:
+            logger.warning(
+                "claude CLI exited %s for symbol=%s: %s",
+                result.returncode,
+                symbol_name,
+                (result.stderr or "")[:200].strip(),
+            )
+            return None
+        text = (result.stdout or "").strip()
+        return text or None
 
 
 def _build_prompt(*, symbol_name: str, title: str, body: str | None) -> str:
@@ -105,31 +138,23 @@ def _build_prompt(*, symbol_name: str, title: str, body: str | None) -> str:
     )
 
 
-def _extract_text(response: object) -> str | None:
-    """Pull the first text block out of an Anthropic Messages response."""
-    content = getattr(response, "content", None) or []
-    for block in content:
-        text = getattr(block, "text", None)
-        if isinstance(text, str) and text.strip():
-            return text.strip()
-    return None
-
-
 def get_summarizer() -> Summarizer:
     """Build a summarizer from runtime settings.
 
-    Returns a :class:`_NullSummarizer` when ``ANTHROPIC_API_KEY`` is unset so
-    callers can stay key-agnostic — the AI-summary feature simply becomes a
-    no-op and the existing rule-based fallback handles rendering.
+    Returns a :class:`_NullSummarizer` when the ``claude`` CLI is not on PATH,
+    so the feature degrades to a no-op (rule-based fallback) on a host where
+    Claude Code is not installed. The CLI itself handles authentication; an
+    expired/missing login surfaces later as a non-zero exit and is logged.
     """
     settings = get_settings()
-    if not settings.anthropic_api_key:
+    cli_path = shutil.which(settings.claude_cli_path) or shutil.which("claude")
+    if cli_path is None:
         return _NullSummarizer()
     try:
-        return AnthropicSummarizer(
-            api_key=settings.anthropic_api_key,
+        return ClaudeCodeSummarizer(
             model=settings.ai_summary_model,
+            cli_path=cli_path,
         )
-    except Exception:  # missing anthropic package, bad key shape, etc.
-        logger.warning("Failed to initialise AnthropicSummarizer", exc_info=True)
+    except Exception:
+        logger.warning("Failed to initialise ClaudeCodeSummarizer", exc_info=True)
         return _NullSummarizer()
