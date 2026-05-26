@@ -2490,13 +2490,20 @@ function FeedReadingPane({
 }) {
   const [activeArticleId, setActiveArticleId] = useState<string | null>(null);
   const [relatedExpanded, setRelatedExpanded] = useState(false);
-  // Items currently being summarized — keeps the spinner pinned and stops the
-  // effect from firing the same request twice while the response is in flight.
+  // Items currently being summarized — keeps the spinner pinned.
   const [pendingAiIds, setPendingAiIds] = useState<Set<number>>(new Set());
+  // Items we already asked the server about for this issue. Held in a ref
+  // (not state) so the trigger effect's deps stay stable: a response that
+  // comes back without an AI summary (no key, LLM failure) must NOT cause the
+  // effect to fire again on the same article — otherwise pending toggles in
+  // a loop and the section flickers between "생성 중…" and "원문 요약".
+  const attemptedAiIdsRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     setActiveArticleId(null);
     setRelatedExpanded(false);
+    setPendingAiIds(new Set());
+    attemptedAiIdsRef.current = new Set();
   }, [issue?.id]);
 
   if (!issue) {
@@ -2538,17 +2545,18 @@ function FeedReadingPane({
   useEffect(() => {
     if (activeNewsItemId === null) return;
     if (activeAiSummary) return;
-    if (pendingAiIds.has(activeNewsItemId)) return;
+    if (attemptedAiIdsRef.current.has(activeNewsItemId)) return;
     const newsItemId = activeNewsItemId;
+    attemptedAiIdsRef.current.add(newsItemId);
     setPendingAiIds((prev) => {
       const next = new Set(prev);
       next.add(newsItemId);
       return next;
     });
-    // Always clear the pending mark when the request settles — on success the
-    // updated row arrives via setDetails, on failure (or when no API key is
-    // configured) the row stays unchanged and the section reverts to the
-    // rule-based fallback label instead of spinning forever.
+    // Always clear the pending mark when the request settles. On success the
+    // updated row arrives via setDetails and the section flips to the new
+    // summary; on failure (or when no key is configured) the section settles
+    // on the rule-based fallback label and stays there.
     onRequestAiSummary(newsItemId).finally(() => {
       setPendingAiIds((prev) => {
         if (!prev.has(newsItemId)) return prev;
@@ -2557,7 +2565,7 @@ function FeedReadingPane({
         return next;
       });
     });
-  }, [activeNewsItemId, activeAiSummary, pendingAiIds, onRequestAiSummary]);
+  }, [activeNewsItemId, activeAiSummary, onRequestAiSummary]);
 
   const aiSummaryText = activeAiSummary ?? activeArticle.summary;
   const aiSummaryStatus: "ready" | "loading" | "fallback" = activeAiSummary
