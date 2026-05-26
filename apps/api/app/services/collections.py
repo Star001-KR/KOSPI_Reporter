@@ -31,6 +31,7 @@ from app.services.opendart import (
     download_corp_code_zip,
     import_corp_codes,
 )
+from app.services.prices import collect_prices_for_symbols
 
 COLLECTION_RUN_TYPE = "collection"
 
@@ -51,6 +52,7 @@ class CollectionOptions:
     import_corp_codes: bool = False
     include_disclosures: bool = True
     include_news: bool = True
+    include_prices: bool = True
     analyze: bool = True
 
 
@@ -102,6 +104,7 @@ def run_collection(
     corp_code_downloader=None,
     disclosure_fetcher=None,
     news_fetcher=None,
+    price_fetcher=None,
     analyzer: Analyzer | None = None,
 ) -> CollectionRun:
     """Run the requested collection steps as one :class:`CollectionRun`.
@@ -186,6 +189,17 @@ def run_collection(
                 db.rollback()
                 step_failed = True
                 notes.append(f"뉴스 수집 실패: {exc}")
+
+        if options.include_prices:
+            # Prices have no auth/quota step that could fail before the loop,
+            # so any error is per-symbol and folded into ``failures``.
+            processed, inserted, failures = collect_prices_for_symbols(
+                db,
+                symbols,
+                fetcher=price_fetcher,
+            )
+            db.commit()
+            notes.append(_step_note("시세", processed, inserted, failures))
 
         if options.analyze:
             news_count, disclosure_count = analyze_targets(db, analyzer)

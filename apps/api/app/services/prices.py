@@ -34,8 +34,6 @@ _KST = timezone(timedelta(hours=9))
 
 # Number of recent daily closes shown on the dashboard sparkline.
 DEFAULT_PRICE_DAYS = 30
-# Re-fetch a symbol's prices at most this often; cached rows are served between.
-_PRICE_TTL = timedelta(hours=6)
 
 
 class PriceFetchError(RuntimeError):
@@ -153,37 +151,45 @@ def _stored_prices(db: Session, symbol_id: int) -> list[DailyPrice]:
     )
 
 
-def _is_fresh(prices: list[DailyPrice]) -> bool:
-    """True when cached prices are recent enough to skip a refetch."""
-    if not prices:
-        return False
-    latest = max(price.collected_at for price in prices)
-    if latest.tzinfo is None:
-        latest = latest.replace(tzinfo=timezone.utc)
-    return (utcnow() - latest) < _PRICE_TTL
-
-
 def get_symbol_prices(
     db: Session,
     symbol: Symbol,
     *,
     days: int = DEFAULT_PRICE_DAYS,
-    fetcher: Callable[..., list[PriceBar]] | None = None,
 ) -> list[DailyPrice]:
-    """Return a symbol's recent daily closes, refreshing the cache when stale.
+    """Return a symbol's recent daily closes from the local cache.
 
-    A fetch failure is swallowed so any previously cached rows are still
-    served; only a cold cache with no data returns an empty list.
+    Naver Finance is only contacted by the scheduler via
+    :func:`collect_prices_for_symbols`; this read path never reaches outside,
+    so a cold cache simply returns an empty list.
     """
-    stored = _stored_prices(db, symbol.id)
-    if not _is_fresh(stored):
-        active = fetcher or fetch_daily_closes
+    return _stored_prices(db, symbol.id)[-days:]
+
+
+def collect_prices_for_symbols(
+    db: Session,
+    symbols: list[Symbol],
+    *,
+    fetcher: Callable[..., list[PriceBar]] | None = None,
+    days: int = DEFAULT_PRICE_DAYS,
+) -> tuple[int, int, list[str]]:
+    """Refresh cached daily closes for each symbol via Naver Finance.
+
+    Mirrors the news/disclosure collectors: per-symbol failures are collected
+    in ``failures`` instead of aborting the run. Returns
+    ``(processed, inserted, failures)``.
+    """
+    active = fetcher or fetch_daily_closes
+    processed = 0
+    inserted = 0
+    failures: list[str] = []
+    for symbol in symbols:
         try:
             bars = active(symbol.code, days=days)
-        except PriceFetchError:
-            bars = []
+        except PriceFetchError as exc:
+            failures.append(f"{symbol.name}({symbol.code}): {exc}")
+            continue
         if bars:
-            store_daily_prices(db, symbol.id, bars)
-            db.commit()
-            stored = _stored_prices(db, symbol.id)
-    return stored[-days:]
+            inserted += store_daily_prices(db, symbol.id, bars)
+        processed += 1
+    return processed, inserted, failures

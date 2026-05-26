@@ -1,6 +1,5 @@
 import type {
   AuthUser,
-  CollectionRun,
   DailyPrice,
   PortfolioBrief,
   SymbolDetail,
@@ -92,20 +91,4 @@ export const api = {
     request<void>(`/api/symbols/${id}`, {
       method: "DELETE",
     }),
-  runCollection: () =>
-    request<CollectionRun>("/api/collections/run", {
-      method: "POST",
-      body: JSON.stringify({}),
-    }),
-  listRuns: () => request<CollectionRun[]>("/api/collections/runs"),
-  seedDemo: () =>
-    request<{ symbol_id: number; news_inserted: number; disclosures_inserted: number }[]>(
-      "/api/dev/seed",
-      { method: "POST" },
-    ),
-  createMockActivity: (id: number) =>
-    request<{ symbol_id: number; news_inserted: number; disclosures_inserted: number }>(
-      `/api/symbols/${id}/mock-activity`,
-      { method: "POST" },
-    ),
 };

@@ -202,8 +202,19 @@ const NEWS_TERM_ALIASES: Array<{ term: string; pattern: RegExp }> = [
 
 const NEWS_STRONG_EVENT_TERMS = new Set(["사과", "노사", "교섭", "귀국", "교체", "계약", "규제"]);
 
-// Dashboard countdown cadence; mirror the worker's COLLECTION_INTERVAL_SECONDS.
-const AUTO_REFRESH_SECONDS = 600;
+// How often the dashboard re-reads the DB on its own. Independent of the
+// scheduler's scrape cadence — pure UI polling, no external calls.
+const AUTO_REFRESH_SECONDS = 1800;
+
+// Minimum interval between "지금 새로고침" clicks. The DB is only as fresh as
+// the scheduler made it, so reading more often is wasted work; the cooldown
+// also keeps a user from spamming reloads.
+const MANUAL_REFRESH_COOLDOWN_SECONDS = 600;
+
+// Per-user watchlist cap. The server's symbol table is shared across users, so
+// this cap lives on the client — it bounds how many cards a single account can
+// pile onto its dashboard, not the system-wide collection target set.
+const MAX_WATCHLIST_SIZE = 20;
 
 // Recent-arrival ticker: how many recent issues to cycle and how long each shows.
 const RECENT_ARRIVAL_LIMIT = 6;
@@ -757,6 +768,7 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [isBusy, setIsBusy] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(AUTO_REFRESH_SECONDS);
+  const [manualCooldownSeconds, setManualCooldownSeconds] = useState(0);
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
   const [bookmarkIds, setBookmarkIds] = useState<Set<string>>(new Set());
   const [notes, setNotes] = useState<Record<string, string>>({});
@@ -853,6 +865,7 @@ function App() {
   useEffect(() => {
     const timer = window.setInterval(() => {
       setSecondsLeft((value) => (value <= 0 ? AUTO_REFRESH_SECONDS : value - 1));
+      setManualCooldownSeconds((value) => Math.max(0, value - 1));
     }, 1000);
     return () => window.clearInterval(timer);
   }, []);
@@ -862,6 +875,13 @@ function App() {
     const seconds = secondsLeft % 60;
     return `${minutes}:${String(seconds).padStart(2, "0")}`;
   }, [secondsLeft]);
+
+  const manualCooldown = useMemo(() => {
+    if (manualCooldownSeconds <= 0) return null;
+    const minutes = Math.floor(manualCooldownSeconds / 60);
+    const seconds = manualCooldownSeconds % 60;
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  }, [manualCooldownSeconds]);
 
   const watchedDetails = useMemo(() => {
     const keys = new Set(watchlist.map((entry) => watchlistKey(entry)));
@@ -885,6 +905,17 @@ function App() {
     );
     setDetails(nextDetails);
   }, []);
+
+  // When the auto-countdown reaches zero, do exactly one DB re-poll. The
+  // interval above wraps secondsLeft back to AUTO_REFRESH_SECONDS on the next
+  // tick, so this effect fires once per cycle, not continuously.
+  useEffect(() => {
+    if (secondsLeft !== 0) return;
+    refresh().catch(() => {
+      // A read failure is already surfaced by the next user-triggered refresh
+      // or the dashboard-load error path; do not double-notify here.
+    });
+  }, [secondsLeft, refresh]);
 
   useEffect(() => {
     if (!authUser) {
@@ -989,44 +1020,23 @@ function App() {
   }
 
   async function handleRefreshCollection() {
+    // External scraping (Naver, OpenDart) is owned by the background scheduler
+    // — the user-facing refresh just re-reads the DB so a click never spikes
+    // outbound API usage or blocks on a slow upstream. The cooldown caps how
+    // often a user can poke this; the DB cannot be fresher than the scheduler
+    // made it.
+    if (manualCooldownSeconds > 0) return;
     await runAction(async () => {
-      let run;
-      try {
-        run = await api.runCollection();
-      } catch (err) {
-        if (err instanceof ApiError && err.status === 409) {
-          // A collection is already running — a notice, not a failure.
-          pushNotification({
-            tone: "info",
-            title: "수집 진행 중",
-            message: err.message,
-          });
-          return;
-        }
-        throw err;
-      }
       await refresh();
       setSecondsLeft(AUTO_REFRESH_SECONDS);
-      if (run.status === "failed") {
-        pushNotification({
-          tone: "error",
-          title: "수집 실패",
-          message: run.message ?? "원인을 확인할 수 없습니다.",
-        });
-        return;
-      }
+      setManualCooldownSeconds(MANUAL_REFRESH_COOLDOWN_SECONDS);
       pushNotification({
         tone: "success",
-        title: "수집 완료",
-        message: `공시 ${run.disclosures_inserted}건 · 뉴스 ${run.news_inserted}건을 업데이트했습니다.`,
+        title: "데이터 갱신",
+        message: "최신 수집 내역을 대시보드에 반영했습니다.",
       });
     }, {
-      start: {
-        tone: "info",
-        title: "수집 시작",
-        message: "등록된 종목의 뉴스와 공시를 최신화하고 있습니다.",
-      },
-      errorTitle: "수집 실패",
+      errorTitle: "데이터 갱신 실패",
     });
   }
 
@@ -1035,10 +1045,25 @@ function App() {
       if (!authUser) return;
       const scope = String(authUser.id);
       const entry = watchlistEntryFromRegistration(state);
-      const nextWatchlist = upsertWatchlistEntry(loadWatchlist(scope), entry);
-      saveWatchlist(scope, nextWatchlist);
-      setWatchlist(nextWatchlist);
-      // Register the symbol as a public collection target — identity only, no
+      // Per-user cap on the local watchlist: re-adding an existing entry is
+      // always fine (it just refreshes metadata); only a genuinely new entry
+      // counts toward the limit.
+      const currentWatchlist = loadWatchlist(scope);
+      const alreadyInWatchlist = currentWatchlist.some(
+        (item) => item.market === entry.market && item.code === entry.code,
+      );
+      if (
+        !alreadyInWatchlist &&
+        currentWatchlist.length >= MAX_WATCHLIST_SIZE
+      ) {
+        pushNotification({
+          tone: "error",
+          title: "종목 등록 불가",
+          message: `대시보드 가독성을 위해 종목은 최대 ${MAX_WATCHLIST_SIZE}개까지 등록할 수 있습니다.`,
+        });
+        return;
+      }
+      // Register the symbol as a shared collection target — identity only, no
       // holdings ever leave the browser. A 409 means it already exists, which
       // is fine; any other failure means the server did not register it.
       let serverRegistered = true;
@@ -1055,6 +1080,9 @@ function App() {
           serverRegistered = false;
         }
       }
+      const nextWatchlist = upsertWatchlistEntry(currentWatchlist, entry);
+      saveWatchlist(scope, nextWatchlist);
+      setWatchlist(nextWatchlist);
       await refresh();
       setView("dashboard");
       pushNotification(
@@ -1146,6 +1174,7 @@ function App() {
         setView={setView}
         countdown={countdown}
         refreshing={isBusy}
+        manualCooldown={manualCooldown}
         onRefresh={handleRefreshCollection}
         onAddStock={() => setModalOpen(true)}
         notifications={notifications}
@@ -1170,6 +1199,7 @@ function App() {
               issues={issues}
               countdown={countdown}
               refreshing={isBusy}
+              manualCooldown={manualCooldown}
               onRefresh={handleRefreshCollection}
               onReorder={reorderWatchlist}
               onRemove={removeFromWatchlist}
@@ -1283,6 +1313,7 @@ function AppBar({
   setView,
   countdown,
   refreshing,
+  manualCooldown,
   onRefresh,
   onAddStock,
   notifications,
@@ -1300,6 +1331,7 @@ function AppBar({
   setView: (view: ViewName) => void;
   countdown: string;
   refreshing: boolean;
+  manualCooldown: string | null;
   onRefresh: () => void;
   onAddStock: () => void;
   notifications: SystemNotification[];
@@ -1338,7 +1370,16 @@ function AppBar({
         </button>
       </nav>
       <div className="right">
-        <button className="status-pill" onClick={onRefresh} disabled={refreshing} title="지금 새로고침">
+        <button
+          className="status-pill"
+          onClick={onRefresh}
+          disabled={refreshing || manualCooldown !== null}
+          title={
+            manualCooldown
+              ? `${manualCooldown} 후 다시 새로고침할 수 있습니다`
+              : "지금 새로고침"
+          }
+        >
           <span className="pulse" />
           <span>
             다음 수집 <b className="mono">{countdown}</b>
@@ -1460,6 +1501,7 @@ function Dashboard({
   issues,
   countdown,
   refreshing,
+  manualCooldown,
   onRefresh,
   onReorder,
   onRemove,
@@ -1469,6 +1511,7 @@ function Dashboard({
   issues: ResearchIssue[];
   countdown: string;
   refreshing: boolean;
+  manualCooldown: string | null;
   onRefresh: () => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
   onRemove: (stock: ResearchStock) => void;
@@ -1481,6 +1524,7 @@ function Dashboard({
         issues={issues}
         countdown={countdown}
         refreshing={refreshing}
+        manualCooldown={manualCooldown}
         onRefresh={onRefresh}
         onPlanetClick={onPlanetClick}
       />
@@ -1499,6 +1543,7 @@ function CollectionPane({
   issues,
   countdown,
   refreshing,
+  manualCooldown,
   onRefresh,
   onPlanetClick,
 }: {
@@ -1506,6 +1551,7 @@ function CollectionPane({
   issues: ResearchIssue[];
   countdown: string;
   refreshing: boolean;
+  manualCooldown: string | null;
   onRefresh: () => void;
   onPlanetClick: (stock: ResearchStock, issueId?: string) => void;
 }) {
@@ -1561,6 +1607,7 @@ function CollectionPane({
         countdown={countdown}
         onRefresh={onRefresh}
         refreshing={refreshing}
+        manualCooldown={manualCooldown}
         onPlanetClick={onPlanetClick}
       />
       <div className="orbital-foot">
@@ -1823,12 +1870,14 @@ function Orbital({
   stocks,
   countdown,
   refreshing,
+  manualCooldown,
   onRefresh,
   onPlanetClick,
 }: {
   stocks: ResearchStock[];
   countdown: string;
   refreshing: boolean;
+  manualCooldown: string | null;
   onRefresh: () => void;
   onPlanetClick: (stock: ResearchStock) => void;
 }) {
@@ -1841,9 +1890,19 @@ function Orbital({
       <div className="orbital-hub">
         <span className="label">다음 자동 수집</span>
         <span className="countdown">{refreshing ? "수집 중" : countdown}</span>
-        <button className="refresh-btn" onClick={onRefresh} data-loading={refreshing ? "true" : "false"}>
+        <button
+          className="refresh-btn"
+          onClick={onRefresh}
+          disabled={manualCooldown !== null}
+          data-loading={refreshing ? "true" : "false"}
+          title={
+            manualCooldown
+              ? `${manualCooldown} 후 다시 새로고침할 수 있습니다`
+              : "지금 새로고침"
+          }
+        >
           <RefreshCw size={12} />
-          지금
+          {manualCooldown ?? "지금"}
         </button>
       </div>
       {stocks.map((stock, index) => {

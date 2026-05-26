@@ -1,6 +1,18 @@
 import unittest
 
-from app.services.prices import PriceBar, PriceFetchError, parse_price_rows
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.database import Base
+from app.models import DailyPrice, Symbol
+from app.services.prices import (
+    PriceBar,
+    PriceFetchError,
+    collect_prices_for_symbols,
+    get_symbol_prices,
+    parse_price_rows,
+)
 
 
 class ParsePriceRowsTests(unittest.TestCase):
@@ -45,6 +57,82 @@ class ParsePriceRowsTests(unittest.TestCase):
     def test_invalid_payload_raises(self) -> None:
         with self.assertRaises(PriceFetchError):
             parse_price_rows("not-json-at-all{")
+
+
+class CollectPricesForSymbolsTests(unittest.TestCase):
+    """The scheduler's price step writes through to the cache; the
+    user-facing read path never reaches outside."""
+
+    def setUp(self) -> None:
+        self.engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(self.engine)
+        self.db = sessionmaker(bind=self.engine, autoflush=False, autocommit=False)()
+        self.symbol_a = Symbol(market="KOSPI", code="005930", name="삼성전자")
+        self.symbol_b = Symbol(market="KOSPI", code="000660", name="SK하이닉스")
+        self.db.add_all([self.symbol_a, self.symbol_b])
+        self.db.commit()
+
+    def tearDown(self) -> None:
+        self.db.close()
+        self.engine.dispose()
+
+    def test_fetches_and_stores_per_symbol(self) -> None:
+        bars_by_code = {
+            "005930": [
+                PriceBar(trade_date="2026-05-19", close=82000.0),
+                PriceBar(trade_date="2026-05-20", close=82500.0),
+            ],
+            "000660": [PriceBar(trade_date="2026-05-20", close=210000.0)],
+        }
+
+        def fake_fetcher(code: str, *, days: int) -> list[PriceBar]:
+            return bars_by_code.get(code, [])
+
+        processed, inserted, failures = collect_prices_for_symbols(
+            self.db, [self.symbol_a, self.symbol_b], fetcher=fake_fetcher
+        )
+        self.db.commit()
+
+        self.assertEqual(processed, 2)
+        self.assertEqual(inserted, 3)
+        self.assertEqual(failures, [])
+
+        stored = self.db.execute(select(DailyPrice)).scalars().all()
+        self.assertEqual(len(stored), 3)
+
+    def test_per_symbol_fetch_error_does_not_abort_the_run(self) -> None:
+        def fake_fetcher(code: str, *, days: int) -> list[PriceBar]:
+            if code == "005930":
+                raise PriceFetchError("네이버 응답 실패")
+            return [PriceBar(trade_date="2026-05-20", close=210000.0)]
+
+        processed, inserted, failures = collect_prices_for_symbols(
+            self.db, [self.symbol_a, self.symbol_b], fetcher=fake_fetcher
+        )
+        self.db.commit()
+
+        self.assertEqual(processed, 1)
+        self.assertEqual(inserted, 1)
+        self.assertEqual(len(failures), 1)
+        self.assertIn("삼성전자", failures[0])
+
+    def test_get_symbol_prices_never_calls_external(self) -> None:
+        """Read path is DB-only; an empty cache stays empty, no fetcher runs."""
+        prices = get_symbol_prices(self.db, self.symbol_a)
+        self.assertEqual(prices, [])
+
+        # After the scheduler runs, the read path surfaces what was stored.
+        bars = [PriceBar(trade_date="2026-05-20", close=82500.0)]
+        collect_prices_for_symbols(
+            self.db, [self.symbol_a], fetcher=lambda *_, **__: bars
+        )
+        self.db.commit()
+        prices = get_symbol_prices(self.db, self.symbol_a)
+        self.assertEqual([p.close for p in prices], [82500.0])
 
 
 if __name__ == "__main__":
