@@ -164,10 +164,12 @@ class ClaudeCodeSummarizerTests(unittest.TestCase):
         self.assertIn("claude-haiku-4-5-20251001", cmd)
         self.assertIn("--tools", cmd)
         self.assertIn("--no-session-persistence", cmd)
-        # Last positional must be the assembled user prompt referencing the
-        # symbol and title so the model has the right context.
-        self.assertIn("삼성전자", cmd[-1])
-        self.assertIn("실적 발표", cmd[-1])
+        # The assembled user prompt must travel on stdin, not argv: argv is
+        # world-readable via ps//proc, and the prompt carries the article body.
+        stdin_text = captured["kwargs"]["input"]
+        self.assertIn("삼성전자", stdin_text)
+        self.assertIn("실적 발표", stdin_text)
+        self.assertNotIn("실적 발표", " ".join(cmd))
 
     def test_non_zero_exit_returns_none(self) -> None:
         with patch(

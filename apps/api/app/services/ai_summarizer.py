@@ -92,6 +92,10 @@ class ClaudeCodeSummarizer:
     ) -> str | None:
         prompt = _build_prompt(symbol_name=symbol_name, title=title, body=body)
         try:
+            # The article text goes on stdin, not argv: process arguments are
+            # world-readable via ``ps``/``/proc`` to other users on the host,
+            # and the prompt carries the news body. ``claude --print`` reads
+            # the prompt from stdin when no positional prompt is given.
             result = subprocess.run(
                 [
                     self._cli_path,
@@ -101,8 +105,8 @@ class ClaudeCodeSummarizer:
                     "--output-format", "text",
                     "--no-session-persistence",
                     "--system-prompt", _SYSTEM_PROMPT,
-                    prompt,
                 ],
+                input=prompt,
                 capture_output=True,
                 text=True,
                 timeout=self._timeout,
