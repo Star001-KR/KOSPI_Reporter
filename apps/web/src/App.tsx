@@ -264,6 +264,24 @@ function formatTime(value: string | null): string {
   }).format(new Date(value));
 }
 
+// Feed list timestamp: today's items show the time (HH:MM), older items show
+// the date (MM. DD.) so the list still reads at a glance across days.
+function formatFeedStamp(value: string | null): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  const now = new Date();
+  const isToday =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  return new Intl.DateTimeFormat(
+    "ko-KR",
+    isToday
+      ? { hour: "2-digit", minute: "2-digit" }
+      : { month: "2-digit", day: "2-digit" },
+  ).format(date);
+}
+
 function formatNotificationStamp(value: string): string {
   return new Intl.DateTimeFormat("ko-KR", {
     month: "2-digit",
@@ -2457,7 +2475,7 @@ function FeedListItem({
           <ImportanceDots value={issue.importance} />
         </span>
       </span>
-      <span className="feed-item-time">{formatTime(issue.occurredAt)}</span>
+      <span className="feed-item-time">{formatFeedStamp(issue.occurredAt)}</span>
     </button>
   );
 }
