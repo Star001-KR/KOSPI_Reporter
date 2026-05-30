@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timezone
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -92,13 +93,14 @@ class CollectPricesForSymbolsTests(unittest.TestCase):
         def fake_fetcher(code: str, *, days: int) -> list[PriceBar]:
             return bars_by_code.get(code, [])
 
-        processed, inserted, failures = collect_prices_for_symbols(
+        processed, inserted, skipped, failures = collect_prices_for_symbols(
             self.db, [self.symbol_a, self.symbol_b], fetcher=fake_fetcher
         )
         self.db.commit()
 
         self.assertEqual(processed, 2)
         self.assertEqual(inserted, 3)
+        self.assertEqual(skipped, 0)
         self.assertEqual(failures, [])
 
         stored = self.db.execute(select(DailyPrice)).scalars().all()
@@ -110,13 +112,14 @@ class CollectPricesForSymbolsTests(unittest.TestCase):
                 raise PriceFetchError("네이버 응답 실패")
             return [PriceBar(trade_date="2026-05-20", close=210000.0)]
 
-        processed, inserted, failures = collect_prices_for_symbols(
+        processed, inserted, skipped, failures = collect_prices_for_symbols(
             self.db, [self.symbol_a, self.symbol_b], fetcher=fake_fetcher
         )
         self.db.commit()
 
         self.assertEqual(processed, 1)
         self.assertEqual(inserted, 1)
+        self.assertEqual(skipped, 0)
         self.assertEqual(len(failures), 1)
         self.assertIn("삼성전자", failures[0])
 
@@ -133,6 +136,55 @@ class CollectPricesForSymbolsTests(unittest.TestCase):
         self.db.commit()
         prices = get_symbol_prices(self.db, self.symbol_a)
         self.assertEqual([p.close for p in prices], [82500.0])
+
+    def test_skips_symbol_refreshed_earlier_today(self) -> None:
+        """A symbol whose cache was touched today (KST) is not re-fetched."""
+        calls: list[str] = []
+
+        def fake_fetcher(code: str, *, days: int) -> list[PriceBar]:
+            calls.append(code)
+            return [PriceBar(trade_date="2026-05-20", close=82500.0)]
+
+        # First run populates the cache with collected_at = now (today, KST).
+        collect_prices_for_symbols(
+            self.db, [self.symbol_a], fetcher=fake_fetcher
+        )
+        self.db.commit()
+
+        # A second run on the same day must skip the fetcher entirely.
+        processed, inserted, skipped, failures = collect_prices_for_symbols(
+            self.db, [self.symbol_a], fetcher=fake_fetcher
+        )
+        self.assertEqual(calls, ["005930"])  # fetched once, not twice
+        self.assertEqual(processed, 0)
+        self.assertEqual(inserted, 0)
+        self.assertEqual(skipped, 1)
+        self.assertEqual(failures, [])
+
+    def test_refetches_when_cache_is_from_an_earlier_day(self) -> None:
+        """A cache collected on a previous day is refreshed, not skipped."""
+        self.db.add(
+            DailyPrice(
+                symbol_id=self.symbol_a.id,
+                trade_date="2026-05-19",
+                close=80000.0,
+                collected_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
+            )
+        )
+        self.db.commit()
+
+        calls: list[str] = []
+
+        def fake_fetcher(code: str, *, days: int) -> list[PriceBar]:
+            calls.append(code)
+            return [PriceBar(trade_date="2026-05-20", close=82500.0)]
+
+        processed, inserted, skipped, failures = collect_prices_for_symbols(
+            self.db, [self.symbol_a], fetcher=fake_fetcher
+        )
+        self.assertEqual(calls, ["005930"])  # stale cache -> fetched
+        self.assertEqual(processed, 1)
+        self.assertEqual(skipped, 0)
 
 
 if __name__ == "__main__":

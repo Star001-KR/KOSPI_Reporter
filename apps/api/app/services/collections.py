@@ -211,14 +211,18 @@ def run_collection(
 
         if options.include_prices:
             # Prices have no auth/quota step that could fail before the loop,
-            # so any error is per-symbol and folded into ``failures``.
-            processed, inserted, failures = collect_prices_for_symbols(
+            # so any error is per-symbol and folded into ``failures``. Symbols
+            # already refreshed earlier today are skipped without a fetch.
+            processed, inserted, skipped, failures = collect_prices_for_symbols(
                 db,
                 symbols,
                 fetcher=price_fetcher,
             )
             db.commit()
-            notes.append(_step_note("시세", processed, inserted, failures))
+            note = _step_note("시세", processed, inserted, failures)
+            if skipped:
+                note += f"/최신 {skipped}종목"
+            notes.append(note)
 
         if options.analyze:
             news_count, disclosure_count = analyze_targets(db, analyzer)

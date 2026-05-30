@@ -14,12 +14,12 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import DailyPrice, Symbol, utcnow
@@ -166,24 +166,51 @@ def get_symbol_prices(
     return _stored_prices(db, symbol.id)[-days:]
 
 
+def _price_is_fresh(db: Session, symbol_id: int, *, today_kst: date) -> bool:
+    """True when this symbol's cache was already refreshed today (KST).
+
+    A daily close is a once-a-day value, so a symbol whose cache was touched
+    earlier on the same trading day needs no re-fetch. ``collected_at`` is
+    stored as UTC; the comparison is made on the KST calendar day so one run
+    per Korean trading day is enough.
+    """
+    latest = db.execute(
+        select(func.max(DailyPrice.collected_at)).where(
+            DailyPrice.symbol_id == symbol_id
+        )
+    ).scalar_one_or_none()
+    if latest is None:
+        return False
+    if latest.tzinfo is None:  # SQLite hands datetimes back without tzinfo
+        latest = latest.replace(tzinfo=timezone.utc)
+    return latest.astimezone(_KST).date() == today_kst
+
+
 def collect_prices_for_symbols(
     db: Session,
     symbols: list[Symbol],
     *,
     fetcher: Callable[..., list[PriceBar]] | None = None,
     days: int = DEFAULT_PRICE_DAYS,
-) -> tuple[int, int, list[str]]:
+) -> tuple[int, int, int, list[str]]:
     """Refresh cached daily closes for each symbol via Naver Finance.
 
     Mirrors the news/disclosure collectors: per-symbol failures are collected
-    in ``failures`` instead of aborting the run. Returns
-    ``(processed, inserted, failures)``.
+    in ``failures`` instead of aborting the run. A symbol already refreshed
+    earlier on the same KST day is skipped without an external call, so running
+    every scheduler tick (default 600s) no longer re-hits Naver for unchanged
+    daily data. Returns ``(processed, inserted, skipped, failures)``.
     """
     active = fetcher or fetch_daily_closes
+    today_kst = datetime.now(_KST).date()
     processed = 0
     inserted = 0
+    skipped = 0
     failures: list[str] = []
     for symbol in symbols:
+        if _price_is_fresh(db, symbol.id, today_kst=today_kst):
+            skipped += 1
+            continue
         try:
             bars = active(symbol.code, days=days)
         except PriceFetchError as exc:
@@ -192,4 +219,4 @@ def collect_prices_for_symbols(
         if bars:
             inserted += store_daily_prices(db, symbol.id, bars)
         processed += 1
-    return processed, inserted, failures
+    return processed, inserted, skipped, failures
