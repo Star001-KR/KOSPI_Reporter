@@ -15,13 +15,18 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import NewsItem
+from app.routers.auth import current_user
 from app.schemas import NewsItemRead
 from app.services.news_summary import ensure_ai_summary
 
 router = APIRouter(prefix="/api/news", tags=["news"])
 
 
-@router.post("/{news_id}/ai-summary", response_model=NewsItemRead)
+@router.post(
+    "/{news_id}/ai-summary",
+    response_model=NewsItemRead,
+    dependencies=[Depends(current_user)],
+)
 def generate_ai_summary(
     news_id: int, db: Session = Depends(get_db)
 ) -> NewsItemRead:
