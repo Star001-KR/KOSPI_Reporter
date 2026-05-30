@@ -167,6 +167,8 @@ const blankRegisterState: RegisterState = {
 
 const NEWS_CLUSTER_WINDOW_MS = 24 * 60 * 60 * 1000;
 const NEWS_TIGHT_CLUSTER_WINDOW_MS = 6 * 60 * 60 * 1000;
+// Items older than a week stop counting toward the unread (planet) badge.
+const UNREAD_FRESH_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const NEWS_SIMILARITY_THRESHOLD = 0.62;
 const NEWS_MIN_SHARED_TERMS = 2;
 
@@ -678,6 +680,7 @@ function buildStocks(
   const detailByKey = new Map(
     details.map((detail) => [`${detail.market}:${detail.code}`, detail]),
   );
+  const freshCutoff = Date.now() - UNREAD_FRESH_WINDOW_MS;
   return watchlist.map((entry, index) => {
     const detail = detailByKey.get(`${entry.market}:${entry.code}`);
     const id = detail?.id ?? -(index + 1);
@@ -709,7 +712,10 @@ function buildStocks(
       }
     }
     const stockIssues = issues.filter((issue) => issue.stockId === id);
-    const unreadIssues = stockIssues.filter((issue) => !readIds.has(issue.id));
+    // Unread counts skip items whose publish/disclosure time is over a week old.
+    const unreadIssues = stockIssues.filter(
+      (issue) => !readIds.has(issue.id) && issueTime(issue) >= freshCutoff,
+    );
     const unreadCount = unreadIssues.length;
     const unreadNewsCount = unreadIssues.filter((issue) => issue.type === "news").length;
     const unreadDisclosureCount = unreadIssues.filter((issue) => issue.type === "disc").length;
