@@ -271,6 +271,7 @@ class CollectionRunRequest(BaseModel):
     import_corp_codes: bool = False
     include_disclosures: bool = True
     include_news: bool = True
+    include_prices: bool = True
     analyze: bool = True
 
 

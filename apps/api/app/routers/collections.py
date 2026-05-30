@@ -43,6 +43,7 @@ def trigger_collection_run(
         import_corp_codes=request.import_corp_codes,
         include_disclosures=request.include_disclosures,
         include_news=request.include_news,
+        include_prices=request.include_prices,
         analyze=request.analyze,
     )
     try:
