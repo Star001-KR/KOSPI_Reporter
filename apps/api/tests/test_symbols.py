@@ -5,14 +5,14 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from fastapi import HTTPException
 
 from app.database import Base
-from app.models import NewsItem, Symbol, User
+from app.models import AnalysisResult, Disclosure, NewsItem, Symbol, User
 from app.routers.symbols import (
     _symbol_detail,
     create_symbol,
@@ -159,6 +159,103 @@ class SymbolOwnershipTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as ctx:
             update_symbol(orphan.id, SymbolPatch(memo="x"), db=self.db, user=user)
         self.assertEqual(ctx.exception.status_code, 403)
+
+
+class AnalysisOrphanCleanupTests(unittest.TestCase):
+    """Removing a symbol / news / disclosure must clear its analysis rows.
+
+    ``AnalysisResult`` references its target by ``(target_type, target_id)``
+    with no foreign key, so ``before_delete`` hooks on NewsItem/Disclosure are
+    responsible for keeping ``analysis_results`` free of orphans.
+    """
+
+    def setUp(self) -> None:
+        self.engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(self.engine)
+        self.db = sessionmaker(bind=self.engine, autoflush=False, autocommit=False)()
+
+    def tearDown(self) -> None:
+        self.db.close()
+        self.engine.dispose()
+
+    def _add_analysis(self, target_type: str, target_id: int) -> None:
+        self.db.add(
+            AnalysisResult(
+                target_type=target_type,
+                target_id=target_id,
+                summary="요약",
+                sentiment="neutral",
+                importance=3,
+                portfolio_impact="영향 없음",
+            )
+        )
+        self.db.commit()
+
+    def test_deleting_a_news_item_clears_only_its_analysis(self) -> None:
+        symbol = Symbol(market="KOSPI", code="005930", name="삼성전자")
+        self.db.add(symbol)
+        self.db.commit()
+        kept = NewsItem(
+            symbol_id=symbol.id,
+            title="유지",
+            original_url="https://news.example.com/keep",
+            canonical_url="https://news.example.com/keep",
+        )
+        doomed = NewsItem(
+            symbol_id=symbol.id,
+            title="삭제",
+            original_url="https://news.example.com/drop",
+            canonical_url="https://news.example.com/drop",
+        )
+        self.db.add_all([kept, doomed])
+        self.db.commit()
+        self._add_analysis("news", kept.id)
+        self._add_analysis("news", doomed.id)
+
+        self.db.delete(doomed)
+        self.db.commit()
+
+        # Only the deleted item's analysis is gone; its sibling's remains.
+        remaining = self.db.execute(select(AnalysisResult.target_id)).scalars().all()
+        self.assertEqual(remaining, [kept.id])
+
+    def test_deleting_a_symbol_clears_news_and_disclosure_analysis(self) -> None:
+        owner = User(email="owner@example.com")
+        self.db.add(owner)
+        self.db.commit()
+        symbol = Symbol(
+            market="KOSPI", code="005930", name="삼성전자", owner_user_id=owner.id
+        )
+        self.db.add(symbol)
+        self.db.commit()
+        news = NewsItem(
+            symbol_id=symbol.id,
+            title="뉴스",
+            original_url="https://news.example.com/a",
+            canonical_url="https://news.example.com/a",
+        )
+        disclosure = Disclosure(
+            symbol_id=symbol.id,
+            rcept_no="20260101000001",
+            report_name="주요사항보고서",
+            original_url="https://dart.example.com/a",
+        )
+        self.db.add_all([news, disclosure])
+        self.db.commit()
+        self._add_analysis("news", news.id)
+        self._add_analysis("disclosure", disclosure.id)
+
+        delete_symbol(symbol.id, db=self.db, user=owner)
+
+        # Symbol cascade removes its news/disclosures, and the hooks take the
+        # matching analysis rows with them — no orphans left behind.
+        self.assertEqual(self.db.execute(select(AnalysisResult)).scalars().all(), [])
+        self.assertEqual(self.db.execute(select(NewsItem)).scalars().all(), [])
+        self.assertEqual(self.db.execute(select(Disclosure)).scalars().all(), [])
 
 
 if __name__ == "__main__":

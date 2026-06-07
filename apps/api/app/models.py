@@ -12,6 +12,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -304,3 +305,36 @@ class DailyPrice(Base):
     )
 
     symbol: Mapped[Symbol] = relationship(back_populates="daily_prices")
+
+
+# ---------------------------------------------------------------------------
+# Orphan cleanup for the polymorphic ``analysis_results`` table.
+#
+# AnalysisResult references its target via ``(target_type, target_id)`` rather
+# than a real foreign key, so the database cannot cascade analysis rows away
+# when the news item or disclosure they describe is deleted. Deleting a symbol
+# cascades to its news/disclosures through the ORM relationships above, which
+# fires these per-row hooks and keeps ``analysis_results`` free of orphans.
+# ---------------------------------------------------------------------------
+
+
+@event.listens_for(NewsItem, "before_delete")
+def _delete_orphan_news_analysis(_mapper, connection, target: NewsItem) -> None:
+    connection.execute(
+        AnalysisResult.__table__.delete().where(
+            (AnalysisResult.target_type == "news")
+            & (AnalysisResult.target_id == target.id)
+        )
+    )
+
+
+@event.listens_for(Disclosure, "before_delete")
+def _delete_orphan_disclosure_analysis(
+    _mapper, connection, target: Disclosure
+) -> None:
+    connection.execute(
+        AnalysisResult.__table__.delete().where(
+            (AnalysisResult.target_type == "disclosure")
+            & (AnalysisResult.target_id == target.id)
+        )
+    )
