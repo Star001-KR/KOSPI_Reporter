@@ -2939,3 +2939,130 @@ a {
     align-items: stretch;
   }
 }
+
+/* --- daily report tab --------------------------------------------------- */
+
+.reports-view {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--sp-5);
+}
+
+.reports-head {
+  margin-bottom: var(--sp-4);
+  color: var(--ink-soft);
+  font-size: 14px;
+}
+
+.reports-head strong {
+  color: var(--ink);
+}
+
+.reports-empty {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  padding: var(--sp-8);
+  color: var(--ink-muted);
+  text-align: center;
+}
+
+.reports-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--sp-4);
+}
+
+.report-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  padding: var(--sp-4);
+}
+
+.report-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.report-card-title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.report-card-name {
+  overflow: hidden;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.report-card-code {
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.rec-badge {
+  flex-shrink: 0;
+  border-radius: var(--r-sm);
+  padding: 2px 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.rec-badge--buy {
+  background: var(--pos-soft);
+  color: var(--pos);
+}
+
+.rec-badge--sell {
+  background: var(--neg-soft);
+  color: var(--neg);
+}
+
+.rec-badge--hold {
+  background: var(--neu-soft);
+  color: var(--neu);
+}
+
+.report-card-price {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.report-card-change.is-pos {
+  color: var(--pos);
+}
+
+.report-card-change.is-neg {
+  color: var(--neg);
+}
+
+.report-card-summary {
+  margin: 0;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-line;
+}
+
+.report-card-rationale {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}

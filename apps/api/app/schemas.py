@@ -280,3 +280,38 @@ class DailyPriceRead(BaseModel):
 
     trade_date: str
     close: float
+
+
+class DailyReportItem(BaseModel):
+    id: int
+    symbol_id: int
+    report_date: str
+    recommendation: Literal["buy", "hold", "sell"]
+    summary: str
+    rationale: str | None = None
+    prev_trade_date: str | None = None
+    prev_close: float | None = None
+    change_pct: float | None = None
+    model_name: str
+    created_at: datetime
+    # Joined from the symbol row by the router (not columns on DailyReport).
+    symbol_name: str
+    symbol_code: str
+    symbol_market: str
+
+
+class DailyReportList(BaseModel):
+    report_date: str | None = None
+    items: list[DailyReportItem] = Field(default_factory=list)
+
+
+class DailyReportRunRequest(BaseModel):
+    symbol_ids: list[int] | None = None
+    overwrite: bool = False
+
+
+class DailyReportRunResult(BaseModel):
+    report_date: str
+    generated: int
+    skipped: int
+    failures: list[str] = Field(default_factory=list)

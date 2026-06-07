@@ -141,3 +141,28 @@ export interface DailyPrice {
   trade_date: string;
   close: number;
 }
+
+export type Recommendation = "buy" | "hold" | "sell";
+
+/** A symbol's morning daily report with a buy/hold/sell opinion. */
+export interface DailyReportItem {
+  id: number;
+  symbol_id: number;
+  report_date: string;
+  recommendation: Recommendation;
+  summary: string;
+  rationale: string | null;
+  prev_trade_date: string | null;
+  prev_close: number | null;
+  change_pct: number | null;
+  model_name: string;
+  created_at: string;
+  symbol_name: string;
+  symbol_code: string;
+  symbol_market: string;
+}
+
+export interface DailyReportList {
+  report_date: string | null;
+  items: DailyReportItem[];
+}

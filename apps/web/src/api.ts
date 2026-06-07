@@ -1,6 +1,7 @@
 import type {
   AuthUser,
   DailyPrice,
+  DailyReportList,
   NewsItem,
   PortfolioBrief,
   SymbolDetail,
@@ -99,4 +100,7 @@ export const api = {
     request<NewsItem>(`/api/news/${newsId}/ai-summary`, {
       method: "POST",
     }),
+  // Every symbol's daily report for the latest published date (or empty when
+  // the morning batch has not run yet). Read-only, like the other GETs.
+  getDailyReports: () => request<DailyReportList>("/api/daily-reports"),
 };

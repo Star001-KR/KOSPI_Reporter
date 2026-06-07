@@ -29,6 +29,8 @@ class Settings:
     claude_cli_path: str
     ai_summary_model: str
     ai_summary_eager_per_symbol: int
+    ai_daily_report_model: str
+    ai_daily_report_timeout_seconds: float
     google_oauth_client_id: str | None
     google_oauth_client_secret: str | None
     google_oauth_redirect_uri: str
@@ -60,6 +62,12 @@ class Settings:
             ),
             ai_summary_eager_per_symbol=int(
                 os.getenv("AI_SUMMARY_EAGER_PER_SYMBOL", "3")
+            ),
+            ai_daily_report_model=os.getenv(
+                "AI_DAILY_REPORT_MODEL", "claude-sonnet-4-6"
+            ),
+            ai_daily_report_timeout_seconds=float(
+                os.getenv("AI_DAILY_REPORT_TIMEOUT_SECONDS", "120")
             ),
             google_oauth_client_id=os.getenv("GOOGLE_OAUTH_CLIENT_ID") or None,
             google_oauth_client_secret=os.getenv("GOOGLE_OAUTH_CLIENT_SECRET") or None,

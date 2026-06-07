@@ -12,13 +12,16 @@ from __future__ import annotations
 import logging
 import os
 import time
+from datetime import datetime, timedelta, timezone
 
 from app.database import SessionLocal, init_db
 from app.services.collections import run_scheduled_collection
+from app.services.daily_report import generate_daily_reports, should_generate_today
 
 logger = logging.getLogger("kospi.scheduler")
 
 _DEFAULT_INTERVAL_SECONDS = 600
+_KST = timezone(timedelta(hours=9))
 
 
 def _interval_seconds() -> int:
@@ -51,6 +54,35 @@ def run_once() -> None:
         db.close()
 
 
+def run_daily_reports_once() -> None:
+    """Generate the day's reports once, when the weekday/time guard allows.
+
+    Like :func:`run_once`, any failure is logged without raising so the loop
+    survives. The same ``now_kst`` drives both the guard and ``report_date`` so
+    a tick near midnight can't disagree with itself.
+    """
+    db = SessionLocal()
+    try:
+        now_kst = datetime.now(_KST)
+        if not should_generate_today(db, now_kst=now_kst):
+            return
+        report_date = now_kst.date().isoformat()
+        generated, skipped, failures = generate_daily_reports(
+            db, report_date=report_date
+        )
+        logger.info(
+            "데일리 리포트 #%s: 생성 %s건, 건너뜀 %s건, 실패 %s건",
+            report_date,
+            generated,
+            skipped,
+            len(failures),
+        )
+    except Exception:  # broad: a tick failure must not kill the worker loop
+        logger.exception("데일리 리포트 생성 중 오류가 발생했습니다.")
+    finally:
+        db.close()
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -61,6 +93,7 @@ def main() -> None:
     logger.info("수집 스케줄러 시작 (주기 %s초)", interval)
     while True:
         run_once()
+        run_daily_reports_once()
         time.sleep(interval)
 
 

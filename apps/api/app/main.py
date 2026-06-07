@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import __version__
 from app.config import get_settings
 from app.database import init_db
-from app.routers import auth, collections, dev, news, portfolio, symbols
+from app.routers import auth, collections, dev, news, portfolio, reports, symbols
 
 
 @asynccontextmanager
@@ -37,6 +37,7 @@ app.include_router(symbols.router)
 app.include_router(portfolio.router)
 app.include_router(collections.router)
 app.include_router(news.router)
+app.include_router(reports.router)
 # Demo/seed routes are mounted only when explicitly enabled (never in prod).
 if settings.enable_dev_routes:
     app.include_router(dev.router)

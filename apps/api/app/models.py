@@ -63,6 +63,10 @@ class Symbol(Base):
         back_populates="symbol",
         cascade="all, delete-orphan",
     )
+    daily_reports: Mapped[list[DailyReport]] = relationship(
+        back_populates="symbol",
+        cascade="all, delete-orphan",
+    )
 
 
 class Holding(Base):
@@ -305,6 +309,37 @@ class DailyPrice(Base):
     )
 
     symbol: Mapped[Symbol] = relationship(back_populates="daily_prices")
+
+
+class DailyReport(Base):
+    __tablename__ = "daily_reports"
+    __table_args__ = (
+        UniqueConstraint(
+            "symbol_id", "report_date", name="uq_daily_reports_symbol_date"
+        ),
+        Index("ix_daily_reports_symbol_date", "symbol_id", "report_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol_id: Mapped[int] = mapped_column(
+        ForeignKey("symbols.id", ondelete="CASCADE"), nullable=False
+    )
+    # Publication day in the KST calendar as an ISO ``YYYY-MM-DD`` string.
+    report_date: Mapped[str] = mapped_column(String(10), nullable=False)
+    recommendation: Mapped[str] = mapped_column(String(8), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    rationale: Mapped[str | None] = mapped_column(Text)
+    # Most recent trading day the price snapshot is based on; can predate
+    # ``report_date`` by more than a day after a weekend or holiday.
+    prev_trade_date: Mapped[str | None] = mapped_column(String(10))
+    prev_close: Mapped[float | None] = mapped_column(Numeric(20, 4))
+    change_pct: Mapped[float | None] = mapped_column(Numeric(10, 4))
+    model_name: Mapped[str] = mapped_column(String(80), default="mock-report")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+    symbol: Mapped[Symbol] = relationship(back_populates="daily_reports")
 
 
 # ---------------------------------------------------------------------------
