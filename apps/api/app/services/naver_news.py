@@ -26,6 +26,7 @@ from kospi_core import NewsDraft
 
 from app.config import get_settings
 from app.models import CollectionRun, NewsItem, Symbol, utcnow
+from app.services.collection_runs import mark_run_failed, run_summary
 from app.services.symbol_catalog import collection_identity
 
 NAVER_NEWS_URL = "https://openapi.naver.com/v1/search/news.json"
@@ -178,22 +179,6 @@ def store_news(db: Session, symbol_id: int, drafts: Iterable[NewsDraft]) -> int:
     return inserted
 
 
-def _mark_run_failed(db: Session, run: CollectionRun, message: str) -> None:
-    run.status = "failed"
-    run.finished_at = utcnow()
-    run.message = message
-    db.commit()
-
-
-def _run_summary(
-    label: str, total: int, processed: int, inserted: int, failures: list[str]
-) -> str:
-    summary = f"{label}: 종목 {processed}/{total} 처리, 신규 {inserted}건."
-    if failures:
-        summary += f" 실패 {len(failures)}건 — " + "; ".join(failures)
-    return summary
-
-
 def _default_news_fetcher(
     client_id: str, client_secret: str
 ) -> Callable[[str], list[dict]]:
@@ -275,14 +260,14 @@ def collect_news(
         run.news_inserted = inserted
         run.finished_at = utcnow()
         run.status = "failed" if symbols and processed == 0 else "success"
-        run.message = _run_summary(
+        run.message = run_summary(
             "뉴스 수집", len(symbols), processed, inserted, failures
         )
         db.commit()
     except NaverNewsError as exc:
         db.rollback()
-        _mark_run_failed(db, run, str(exc))
+        mark_run_failed(db, run, str(exc))
     except Exception as exc:  # broad: any failure must still be recorded
         db.rollback()
-        _mark_run_failed(db, run, f"뉴스 수집 중 예상치 못한 오류: {exc}")
+        mark_run_failed(db, run, f"뉴스 수집 중 예상치 못한 오류: {exc}")
     return run

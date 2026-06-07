@@ -29,6 +29,7 @@ from kospi_core import DisclosureDraft
 
 from app.config import get_settings
 from app.models import CollectionRun, DartCorpCode, Disclosure, Symbol, utcnow
+from app.services.collection_runs import mark_run_failed, run_summary
 from app.services.symbol_catalog import collection_identity
 
 CORP_CODE_URL = "https://opendart.fss.or.kr/api/corpCode.xml"
@@ -200,13 +201,6 @@ def upsert_corp_codes(db: Session, entries: Iterable[CorpCodeEntry]) -> tuple[in
     return inserted, updated
 
 
-def _mark_run_failed(db: Session, run: CollectionRun, message: str) -> None:
-    run.status = "failed"
-    run.finished_at = utcnow()
-    run.message = message
-    db.commit()
-
-
 def import_corp_codes(
     db: Session, api_key: str, downloader: Callable[[str], bytes]
 ) -> tuple[int, int, int]:
@@ -261,10 +255,10 @@ def run_corp_code_import(
         db.commit()
     except OpenDartError as exc:
         db.rollback()
-        _mark_run_failed(db, run, str(exc))
+        mark_run_failed(db, run, str(exc))
     except Exception as exc:  # broad: any failure must still be recorded
         db.rollback()
-        _mark_run_failed(db, run, f"corp code import 중 예상치 못한 오류: {exc}")
+        mark_run_failed(db, run, f"corp code import 중 예상치 못한 오류: {exc}")
     return run
 
 
@@ -405,15 +399,6 @@ def _default_disclosure_fetcher(
     return fetch
 
 
-def _run_summary(
-    label: str, total: int, processed: int, inserted: int, failures: list[str]
-) -> str:
-    summary = f"{label}: 종목 {processed}/{total} 처리, 신규 {inserted}건."
-    if failures:
-        summary += f" 실패 {len(failures)}건 — " + "; ".join(failures)
-    return summary
-
-
 def collect_disclosures_for_symbols(
     db: Session,
     symbols: list[Symbol],
@@ -490,14 +475,14 @@ def collect_disclosures(
         run.disclosures_inserted = inserted
         run.finished_at = utcnow()
         run.status = "failed" if symbols and processed == 0 else "success"
-        run.message = _run_summary(
+        run.message = run_summary(
             "공시 수집", len(symbols), processed, inserted, failures
         )
         db.commit()
     except OpenDartError as exc:
         db.rollback()
-        _mark_run_failed(db, run, str(exc))
+        mark_run_failed(db, run, str(exc))
     except Exception as exc:  # broad: any failure must still be recorded
         db.rollback()
-        _mark_run_failed(db, run, f"공시 수집 중 예상치 못한 오류: {exc}")
+        mark_run_failed(db, run, f"공시 수집 중 예상치 못한 오류: {exc}")
     return run
