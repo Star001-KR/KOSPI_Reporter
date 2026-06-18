@@ -16,7 +16,11 @@ from app.schemas import (
 )
 from app.services.daily_report import generate_daily_reports, kst_today
 
-router = APIRouter(prefix="/api/daily-reports", tags=["daily-reports"])
+router = APIRouter(
+    prefix="/api/daily-reports",
+    tags=["daily-reports"],
+    dependencies=[Depends(current_user)],
+)
 
 
 def _to_item(report: DailyReport) -> DailyReportItem:
@@ -46,8 +50,7 @@ def list_daily_reports(
 ) -> DailyReportList:
     """Every symbol's report for a date — the latest published date if omitted.
 
-    Read path is unauthenticated like the other GET endpoints; a date with no
-    reports yields an empty list.
+    A date with no reports yields an empty list.
     """
     target_date = date or db.execute(
         select(func.max(DailyReport.report_date))
@@ -72,7 +75,6 @@ def list_daily_reports(
 @router.post(
     "/run",
     response_model=DailyReportRunResult,
-    dependencies=[Depends(current_user)],
 )
 def run_daily_reports(
     payload: DailyReportRunRequest | None = None,

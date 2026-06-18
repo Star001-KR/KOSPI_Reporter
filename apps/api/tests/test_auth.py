@@ -14,6 +14,7 @@ from app.models import AuthSession, User, UserIdentity, utcnow
 from app.services.auth import (
     GOOGLE_PROVIDER,
     create_session,
+    email_is_allowed,
     revoke_session_token,
     user_for_session_token,
     user_from_google_token_payload,
@@ -100,6 +101,25 @@ class AuthServiceTests(unittest.TestCase):
         self.db.commit()
 
         self.assertIsNone(user_for_session_token(self.db, token))
+
+
+class EmailAllowlistTests(unittest.TestCase):
+    def test_empty_allowlist_permits_everyone(self) -> None:
+        self.assertTrue(email_is_allowed((), "anyone@example.com"))
+        self.assertTrue(email_is_allowed((), None))
+
+    def test_configured_allowlist_restricts_to_listed_addresses(self) -> None:
+        allowed = ("alice@example.com", "bob@example.com")
+        self.assertTrue(email_is_allowed(allowed, "alice@example.com"))
+        self.assertFalse(email_is_allowed(allowed, "carol@example.com"))
+
+    def test_match_ignores_case_and_surrounding_whitespace(self) -> None:
+        self.assertTrue(
+            email_is_allowed(("alice@example.com",), "  Alice@Example.com  ")
+        )
+
+    def test_missing_email_rejected_when_allowlist_configured(self) -> None:
+        self.assertFalse(email_is_allowed(("alice@example.com",), None))
 
 
 if __name__ == "__main__":

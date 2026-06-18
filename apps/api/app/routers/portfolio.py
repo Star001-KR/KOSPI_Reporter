@@ -9,10 +9,15 @@ from fastapi import APIRouter, Depends
 
 from app.database import get_db
 from app.models import AnalysisResult, Disclosure, NewsItem, Symbol
+from app.routers.auth import current_user
 from app.routers.symbols import research_symbol_ids
 from app.schemas import BriefItem, BriefPosition, PortfolioBrief, SymbolRead
 
-router = APIRouter(prefix="/api/portfolio", tags=["portfolio"])
+router = APIRouter(
+    prefix="/api/portfolio",
+    tags=["portfolio"],
+    dependencies=[Depends(current_user)],
+)
 
 
 def _latest_analysis(

@@ -14,8 +14,10 @@ from app.services.auth import (
     OAUTH_STATE_COOKIE_NAME,
     SESSION_COOKIE_NAME,
     AuthError,
+    AuthNotAllowedError,
     build_google_authorization_url,
     create_session,
+    ensure_email_allowed,
     exchange_google_code,
     fetch_google_profile,
     generate_state_token,
@@ -64,6 +66,15 @@ def _clear_state_cookie(response: Response) -> None:
         path="/api/auth",
         samesite="lax",
     )
+
+
+def _auth_error_redirect(error_code: str) -> RedirectResponse:
+    response = RedirectResponse(
+        _frontend_redirect({"auth_error": error_code}),
+        status_code=status.HTTP_302_FOUND,
+    )
+    _clear_state_cookie(response)
+    return response
 
 
 def current_user(
@@ -116,20 +127,10 @@ def finish_google_login(
     ),
 ) -> RedirectResponse:
     if error:
-        response = RedirectResponse(
-            _frontend_redirect({"auth_error": error}),
-            status_code=status.HTTP_302_FOUND,
-        )
-        _clear_state_cookie(response)
-        return response
+        return _auth_error_redirect(error)
 
     if not code or not state or not expected_state or state != expected_state:
-        response = RedirectResponse(
-            _frontend_redirect({"auth_error": "invalid_state"}),
-            status_code=status.HTTP_302_FOUND,
-        )
-        _clear_state_cookie(response)
-        return response
+        return _auth_error_redirect("invalid_state")
 
     settings = get_settings()
     try:
@@ -138,19 +139,18 @@ def finish_google_login(
         if not access_token:
             raise AuthError("Google access token을 확인할 수 없습니다.")
         profile = fetch_google_profile(access_token)
+        ensure_email_allowed(settings, profile.email)
         user = upsert_google_user(db, profile)
         session_token, _session = create_session(
             db, user, session_days=settings.auth_session_days
         )
         db.commit()
+    except AuthNotAllowedError:
+        db.rollback()
+        return _auth_error_redirect("not_allowed")
     except AuthError:
         db.rollback()
-        response = RedirectResponse(
-            _frontend_redirect({"auth_error": "google_login_failed"}),
-            status_code=status.HTTP_302_FOUND,
-        )
-        _clear_state_cookie(response)
-        return response
+        return _auth_error_redirect("google_login_failed")
 
     response = RedirectResponse(
         _frontend_redirect({"auth": "success"}),

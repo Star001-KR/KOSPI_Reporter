@@ -37,6 +37,7 @@ class Settings:
     auth_cookie_secure: bool
     auth_cookie_samesite: str
     auth_session_days: int
+    auth_allowed_emails: tuple[str, ...]
     enable_dev_routes: bool
 
     @classmethod
@@ -79,6 +80,11 @@ class Settings:
             in {"1", "true", "yes"},
             auth_cookie_samesite=os.getenv("AUTH_COOKIE_SAMESITE", "lax").lower(),
             auth_session_days=int(os.getenv("AUTH_SESSION_DAYS", "30")),
+            auth_allowed_emails=tuple(
+                email.strip().lower()
+                for email in os.getenv("AUTH_ALLOWED_EMAILS", "").split(",")
+                if email.strip()
+            ),
             enable_dev_routes=os.getenv("ENABLE_DEV_ROUTES", "").lower()
             in {"1", "true", "yes"},
         )

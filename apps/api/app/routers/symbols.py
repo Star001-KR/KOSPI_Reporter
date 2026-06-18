@@ -33,7 +33,11 @@ from app.services.symbol_catalog import (
     resolve_single_symbol,
 )
 
-router = APIRouter(prefix="/api/symbols", tags=["symbols"])
+router = APIRouter(
+    prefix="/api/symbols",
+    tags=["symbols"],
+    dependencies=[Depends(current_user)],
+)
 
 
 def _get_symbol_or_404(db: Session, symbol_id: int) -> Symbol:
@@ -321,7 +325,6 @@ def delete_symbol(
 @router.post(
     "/{symbol_id}/mock-activity",
     response_model=MockActivityResult,
-    dependencies=[Depends(current_user)],
 )
 def create_mock_activity(
     symbol_id: int, db: Session = Depends(get_db)

@@ -18,13 +18,16 @@ from app.services.collections import (
 from app.services.naver_news import collect_news
 from app.services.opendart import collect_disclosures, run_corp_code_import
 
-router = APIRouter(prefix="/api/collections", tags=["collections"])
+router = APIRouter(
+    prefix="/api/collections",
+    tags=["collections"],
+    dependencies=[Depends(current_user)],
+)
 
 
 @router.post(
     "/run",
     response_model=CollectionRunRead,
-    dependencies=[Depends(current_user)],
 )
 def trigger_collection_run(
     payload: CollectionRunRequest | None = None,
@@ -84,7 +87,6 @@ def get_collection_run(
 @router.post(
     "/corp-codes/import",
     response_model=CollectionRunRead,
-    dependencies=[Depends(current_user)],
 )
 def import_corp_codes(db: Session = Depends(get_db)) -> CollectionRunRead:
     """Download the OpenDART corp code archive and upsert ``dart_corp_codes``.
@@ -99,7 +101,6 @@ def import_corp_codes(db: Session = Depends(get_db)) -> CollectionRunRead:
 @router.post(
     "/disclosures",
     response_model=CollectionRunRead,
-    dependencies=[Depends(current_user)],
 )
 def collect_disclosure_run(db: Session = Depends(get_db)) -> CollectionRunRead:
     """Collect recent OpenDART disclosures for every registered symbol."""
@@ -109,7 +110,6 @@ def collect_disclosure_run(db: Session = Depends(get_db)) -> CollectionRunRead:
 @router.post(
     "/news",
     response_model=CollectionRunRead,
-    dependencies=[Depends(current_user)],
 )
 def collect_news_run(db: Session = Depends(get_db)) -> CollectionRunRead:
     """Collect recent Naver news for every registered symbol."""
@@ -119,7 +119,6 @@ def collect_news_run(db: Session = Depends(get_db)) -> CollectionRunRead:
 @router.post(
     "/analyze",
     response_model=CollectionRunRead,
-    dependencies=[Depends(current_user)],
 )
 def analyze_run(db: Session = Depends(get_db)) -> CollectionRunRead:
     """Analyze collected news and disclosures that have no analysis result yet."""
