@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session, joinedload
 from fastapi import APIRouter, Depends, Query
 
 from app.database import get_db
-from app.models import DailyReport
+from app.models import DailyReport, Symbol, User
 from app.routers.auth import current_user
 from app.schemas import (
     DailyReportItem,
@@ -47,13 +47,20 @@ def _to_item(report: DailyReport) -> DailyReportItem:
 def list_daily_reports(
     date: str | None = Query(default=None),
     db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ) -> DailyReportList:
-    """Every symbol's report for a date — the latest published date if omitted.
+    """Reports for symbols the current user registered, for a single date.
 
+    The date defaults to the latest date this user has any report. Only
+    symbols owned by the user are included — seeded rows (no owner) and other
+    users' symbols are excluded, mirroring the ownership rule in symbols.py.
     A date with no reports yields an empty list.
     """
+    owned = select(DailyReport.id).join(DailyReport.symbol).where(
+        Symbol.owner_user_id == user.id
+    )
     target_date = date or db.execute(
-        select(func.max(DailyReport.report_date))
+        select(func.max(DailyReport.report_date)).where(DailyReport.id.in_(owned))
     ).scalar_one_or_none()
     if target_date is None:
         return DailyReportList(report_date=None, items=[])
@@ -61,8 +68,10 @@ def list_daily_reports(
     reports = list(
         db.execute(
             select(DailyReport)
+            .join(DailyReport.symbol)
             .options(joinedload(DailyReport.symbol))
             .where(DailyReport.report_date == target_date)
+            .where(Symbol.owner_user_id == user.id)
         ).scalars()
     )
     reports.sort(key=lambda report: (report.symbol.market, report.symbol.code))

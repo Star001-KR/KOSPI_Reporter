@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base
-from app.models import DailyPrice, DailyReport, Symbol
+from app.models import DailyPrice, DailyReport, Symbol, User
 from app.routers.reports import list_daily_reports
 from app.services import daily_report as dr
 
@@ -70,11 +70,25 @@ class _DbTestCase(unittest.TestCase):
         self.db.close()
         self.engine.dispose()
 
-    def _add_symbol(self, *, code: str = "005930", name: str = "삼성전자") -> Symbol:
-        symbol = Symbol(market="KOSPI", code=code, name=name)
+    def _add_symbol(
+        self,
+        *,
+        code: str = "005930",
+        name: str = "삼성전자",
+        owner_user_id: int | None = None,
+    ) -> Symbol:
+        symbol = Symbol(
+            market="KOSPI", code=code, name=name, owner_user_id=owner_user_id
+        )
         self.db.add(symbol)
         self.db.commit()
         return symbol
+
+    def _add_user(self, *, email: str = "owner@example.com") -> User:
+        user = User(email=email)
+        self.db.add(user)
+        self.db.commit()
+        return user
 
     def _add_price(self, symbol_id: int, trade_date: str, close: float) -> None:
         self.db.add(
@@ -233,7 +247,8 @@ class ShouldGenerateTodayTests(_DbTestCase):
 
 class ListDailyReportsRouterTests(_DbTestCase):
     def test_latest_date_with_flattened_symbol_fields(self) -> None:
-        symbol = self._add_symbol()
+        user = self._add_user()
+        symbol = self._add_symbol(owner_user_id=user.id)
         self.db.add_all(
             [
                 DailyReport(
@@ -254,7 +269,7 @@ class ListDailyReportsRouterTests(_DbTestCase):
         )
         self.db.commit()
 
-        result = list_daily_reports(date=None, db=self.db)
+        result = list_daily_reports(date=None, db=self.db, user=user)
         self.assertEqual(result.report_date, "2026-06-05")
         self.assertEqual(len(result.items), 1)
         item = result.items[0]
@@ -264,9 +279,65 @@ class ListDailyReportsRouterTests(_DbTestCase):
         self.assertEqual(item.symbol_code, "005930")
 
     def test_empty_when_no_reports(self) -> None:
-        result = list_daily_reports(date=None, db=self.db)
+        user = self._add_user()
+        result = list_daily_reports(date=None, db=self.db, user=user)
         self.assertIsNone(result.report_date)
         self.assertEqual(result.items, [])
+
+    def test_only_reports_for_symbols_the_user_registered(self) -> None:
+        user = self._add_user(email="me@example.com")
+        other = self._add_user(email="other@example.com")
+        mine = self._add_symbol(code="005930", name="삼성전자", owner_user_id=user.id)
+        theirs = self._add_symbol(
+            code="000660", name="SK하이닉스", owner_user_id=other.id
+        )
+        seeded = self._add_symbol(code="035720", name="카카오", owner_user_id=None)
+        for sym in (mine, theirs, seeded):
+            self.db.add(
+                DailyReport(
+                    symbol_id=sym.id,
+                    report_date="2026-06-05",
+                    recommendation="buy",
+                    summary="s",
+                    model_name="m",
+                )
+            )
+        self.db.commit()
+
+        result = list_daily_reports(date=None, db=self.db, user=user)
+        self.assertEqual(result.report_date, "2026-06-05")
+        self.assertEqual([item.symbol_code for item in result.items], ["005930"])
+
+    def test_latest_date_ignores_other_users_newer_reports(self) -> None:
+        user = self._add_user(email="me@example.com")
+        other = self._add_user(email="other@example.com")
+        mine = self._add_symbol(code="005930", name="삼성전자", owner_user_id=user.id)
+        theirs = self._add_symbol(
+            code="000660", name="SK하이닉스", owner_user_id=other.id
+        )
+        self.db.add_all(
+            [
+                DailyReport(
+                    symbol_id=mine.id,
+                    report_date="2026-06-04",
+                    recommendation="buy",
+                    summary="mine",
+                    model_name="m",
+                ),
+                DailyReport(
+                    symbol_id=theirs.id,
+                    report_date="2026-06-05",
+                    recommendation="buy",
+                    summary="theirs",
+                    model_name="m",
+                ),
+            ]
+        )
+        self.db.commit()
+
+        result = list_daily_reports(date=None, db=self.db, user=user)
+        self.assertEqual(result.report_date, "2026-06-04")
+        self.assertEqual([item.symbol_code for item in result.items], ["005930"])
 
 
 class CascadeTests(_DbTestCase):
