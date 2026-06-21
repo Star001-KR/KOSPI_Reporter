@@ -104,9 +104,19 @@ class AuthServiceTests(unittest.TestCase):
 
 
 class EmailAllowlistTests(unittest.TestCase):
-    def test_empty_allowlist_permits_everyone(self) -> None:
-        self.assertTrue(email_is_allowed((), "anyone@example.com"))
-        self.assertTrue(email_is_allowed((), None))
+    def test_empty_allowlist_denies_everyone_by_default(self) -> None:
+        # Fail closed: a forgotten allowlist must not become an open door.
+        self.assertFalse(email_is_allowed((), "anyone@example.com"))
+        self.assertFalse(email_is_allowed((), None))
+
+    def test_empty_allowlist_permits_everyone_only_with_explicit_opt_in(self) -> None:
+        self.assertTrue(email_is_allowed((), "anyone@example.com", allow_all=True))
+        self.assertTrue(email_is_allowed((), None, allow_all=True))
+
+    def test_opt_in_is_ignored_once_an_allowlist_is_configured(self) -> None:
+        allowed = ("alice@example.com",)
+        self.assertTrue(email_is_allowed(allowed, "alice@example.com", allow_all=True))
+        self.assertFalse(email_is_allowed(allowed, "carol@example.com", allow_all=True))
 
     def test_configured_allowlist_restricts_to_listed_addresses(self) -> None:
         allowed = ("alice@example.com", "bob@example.com")

@@ -38,6 +38,7 @@ class Settings:
     auth_cookie_samesite: str
     auth_session_days: int
     auth_allowed_emails: tuple[str, ...]
+    auth_allow_all_signins: bool
     enable_dev_routes: bool
 
     @classmethod
@@ -85,6 +86,10 @@ class Settings:
                 for email in os.getenv("AUTH_ALLOWED_EMAILS", "").split(",")
                 if email.strip()
             ),
+            # Fail closed: with no allowlist configured, sign-in is denied unless
+            # this is explicitly turned on (local-development escape hatch).
+            auth_allow_all_signins=os.getenv("AUTH_ALLOW_ALL_SIGNINS", "").lower()
+            in {"1", "true", "yes"},
             enable_dev_routes=os.getenv("ENABLE_DEV_ROUTES", "").lower()
             in {"1", "true", "yes"},
         )

@@ -55,15 +55,19 @@ def generate_state_token() -> str:
     return secrets.token_urlsafe(32)
 
 
-def email_is_allowed(allowed: tuple[str, ...], email: str | None) -> bool:
+def email_is_allowed(
+    allowed: tuple[str, ...], email: str | None, *, allow_all: bool = False
+) -> bool:
     """Whether ``email`` may sign in, given the configured allowlist.
 
-    An empty allowlist permits everyone — the local-development default. Once
-    any address is configured, only those addresses may sign in (compared
+    Fails closed: an empty allowlist denies everyone unless ``allow_all`` is
+    set (the explicit local-development escape hatch), so a forgotten
+    ``AUTH_ALLOWED_EMAILS`` never silently turns the app into an open service.
+    Once any address is configured, only those addresses may sign in (compared
     case-insensitively), and a profile without an email is rejected.
     """
     if not allowed:
-        return True
+        return allow_all
     if not email:
         return False
     return email.strip().lower() in allowed
@@ -71,7 +75,11 @@ def email_is_allowed(allowed: tuple[str, ...], email: str | None) -> bool:
 
 def ensure_email_allowed(settings: Settings, email: str | None) -> None:
     """Raise :class:`AuthNotAllowedError` if ``email`` is not on the allowlist."""
-    if not email_is_allowed(settings.auth_allowed_emails, email):
+    if not email_is_allowed(
+        settings.auth_allowed_emails,
+        email,
+        allow_all=settings.auth_allow_all_signins,
+    ):
         raise AuthNotAllowedError("이 계정은 접근이 허용되지 않았습니다.")
 
 
