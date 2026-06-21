@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
+
+from fastapi import HTTPException
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -11,7 +14,8 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base
 from app.models import DailyPrice, DailyReport, Symbol, User
-from app.routers.reports import list_daily_reports
+from app.routers.reports import list_daily_reports, run_daily_reports
+from app.schemas import DailyReportRunRequest
 from app.services import daily_report as dr
 
 _KST = timezone(timedelta(hours=9))
@@ -338,6 +342,58 @@ class ListDailyReportsRouterTests(_DbTestCase):
         result = list_daily_reports(date=None, db=self.db, user=user)
         self.assertEqual(result.report_date, "2026-06-04")
         self.assertEqual([item.symbol_code for item in result.items], ["005930"])
+
+
+class RunDailyReportsScopingTests(_DbTestCase):
+    """POST /run must only ever generate reports for the caller's own symbols."""
+
+    def _run(self, request, user):
+        # Patch the heavy generator call away; capture the symbol_ids the router
+        # resolved so we test the authorization scoping, not the CLI.
+        with patch("app.routers.reports.generate_daily_reports") as gen:
+            gen.return_value = (0, 0, [])
+            run_daily_reports(request, db=self.db, user=user)
+            self.assertEqual(gen.call_count, 1)
+            return gen.call_args.kwargs["symbol_ids"]
+
+    def test_omitted_symbol_ids_targets_only_the_callers_symbols(self) -> None:
+        owner = self._add_user(email="owner@example.com")
+        other = self._add_user(email="other@example.com")
+        mine_a = self._add_symbol(code="005930", name="삼성전자", owner_user_id=owner.id)
+        mine_b = self._add_symbol(code="000660", name="SK하이닉스", owner_user_id=owner.id)
+        self._add_symbol(code="035420", name="NAVER", owner_user_id=other.id)
+        self._add_symbol(code="005380", name="현대차")  # seeded / unowned
+
+        target_ids = self._run(None, owner)
+
+        self.assertEqual(target_ids, sorted([mine_a.id, mine_b.id]))
+
+    def test_requesting_a_non_owned_id_is_rejected(self) -> None:
+        owner = self._add_user(email="owner@example.com")
+        other = self._add_user(email="other@example.com")
+        self._add_symbol(code="005930", name="삼성전자", owner_user_id=owner.id)
+        theirs = self._add_symbol(code="035420", name="NAVER", owner_user_id=other.id)
+
+        with self.assertRaises(HTTPException) as ctx:
+            self._run(DailyReportRunRequest(symbol_ids=[theirs.id]), owner)
+        self.assertEqual(ctx.exception.status_code, 403)
+
+    def test_owned_subset_is_passed_through(self) -> None:
+        owner = self._add_user(email="owner@example.com")
+        mine_a = self._add_symbol(code="005930", name="삼성전자", owner_user_id=owner.id)
+        self._add_symbol(code="000660", name="SK하이닉스", owner_user_id=owner.id)
+
+        target_ids = self._run(DailyReportRunRequest(symbol_ids=[mine_a.id]), owner)
+
+        self.assertEqual(target_ids, [mine_a.id])
+
+    def test_user_with_no_symbols_generates_nothing(self) -> None:
+        loner = self._add_user(email="loner@example.com")
+        self._add_symbol(code="005930", name="삼성전자")  # unowned
+
+        target_ids = self._run(None, loner)
+
+        self.assertEqual(target_ids, [])
 
 
 class CascadeTests(_DbTestCase):

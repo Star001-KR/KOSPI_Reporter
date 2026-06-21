@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.database import get_db
 from app.models import DailyReport, Symbol, User
@@ -88,19 +88,37 @@ def list_daily_reports(
 def run_daily_reports(
     payload: DailyReportRunRequest | None = None,
     db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ) -> DailyReportRunResult:
-    """Generate today's reports on demand (manual/dev; no weekday/time guard).
+    """Generate today's reports on demand (manual; no weekday/time guard).
 
-    Idempotent: a symbol already reported today is skipped unless
-    ``overwrite`` is set. The scheduler runs the same service automatically on
-    weekday mornings.
+    Scoped to the caller's own symbols: an omitted ``symbol_ids`` targets every
+    symbol the user registered (never other accounts'), and any explicitly
+    requested id the user does not own is rejected. Idempotent — a symbol
+    already reported today is skipped unless ``overwrite`` is set. The scheduler
+    runs the same service for all symbols automatically on weekday mornings.
     """
     request = payload or DailyReportRunRequest()
+    owned_ids = set(
+        db.execute(
+            select(Symbol.id).where(Symbol.owner_user_id == user.id)
+        ).scalars()
+    )
+    if request.symbol_ids is None:
+        target_ids = sorted(owned_ids)
+    else:
+        not_owned = set(request.symbol_ids) - owned_ids
+        if not_owned:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="본인이 등록한 종목에 대해서만 리포트를 생성할 수 있습니다.",
+            )
+        target_ids = sorted(set(request.symbol_ids))
     report_date = kst_today()
     generated, skipped, failures = generate_daily_reports(
         db,
         report_date=report_date,
-        symbol_ids=request.symbol_ids,
+        symbol_ids=target_ids,
         overwrite=request.overwrite,
     )
     return DailyReportRunResult(
