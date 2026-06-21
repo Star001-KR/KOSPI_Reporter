@@ -64,6 +64,18 @@ def _require_symbol_owner(symbol: Symbol, user: User) -> None:
         )
 
 
+def _require_symbol_read_access(symbol: Symbol, user: User) -> None:
+    """Hide symbols the current user does not own from the read endpoints.
+
+    Mirrors :func:`_require_symbol_owner` but answers 404 (not 403) so a caller
+    cannot probe which symbol ids belong to other accounts. The legacy backfill
+    in ``app.database`` claims pre-auth unowned rows for the sole user, so a
+    ``None`` owner here is a seeded row that belongs to nobody and stays hidden.
+    """
+    if symbol.owner_user_id is None or symbol.owner_user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Symbol not found")
+
+
 def research_symbol_ids(db: Session, symbol: Symbol) -> list[int]:
     """Every symbol id whose collected news and disclosures represent ``symbol``.
 
@@ -221,10 +233,14 @@ def _symbol_detail(db: Session, symbol: Symbol) -> SymbolDetail:
 
 
 @router.get("", response_model=list[SymbolRead])
-def list_symbols(db: Session = Depends(get_db)) -> list[SymbolRead]:
+def list_symbols(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> list[SymbolRead]:
     symbols = db.execute(
         select(Symbol)
         .options(joinedload(Symbol.holding))
+        .where(Symbol.owner_user_id == user.id)
         .order_by(Symbol.market.asc(), Symbol.code.asc())
     ).scalars()
     return [SymbolRead.model_validate(symbol) for symbol in symbols]
@@ -264,13 +280,21 @@ def create_symbol(
 
 
 @router.get("/{symbol_id}", response_model=SymbolDetail)
-def get_symbol(symbol_id: int, db: Session = Depends(get_db)) -> SymbolDetail:
-    return _symbol_detail(db, _get_symbol_or_404(db, symbol_id))
+def get_symbol(
+    symbol_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> SymbolDetail:
+    symbol = _get_symbol_or_404(db, symbol_id)
+    _require_symbol_read_access(symbol, user)
+    return _symbol_detail(db, symbol)
 
 
 @router.get("/{symbol_id}/prices", response_model=list[DailyPriceRead])
 def get_symbol_price_history(
-    symbol_id: int, db: Session = Depends(get_db)
+    symbol_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ) -> list[DailyPriceRead]:
     """Recent daily closes for a symbol's dashboard sparkline.
 
@@ -278,6 +302,7 @@ def get_symbol_price_history(
     short TTL; a fetch failure still serves whatever is already cached.
     """
     symbol = _get_symbol_or_404(db, symbol_id)
+    _require_symbol_read_access(symbol, user)
     return [
         DailyPriceRead.model_validate(price)
         for price in get_symbol_prices(db, symbol)
@@ -327,9 +352,12 @@ def delete_symbol(
     response_model=MockActivityResult,
 )
 def create_mock_activity(
-    symbol_id: int, db: Session = Depends(get_db)
+    symbol_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ) -> MockActivityResult:
     symbol = _get_symbol_or_404(db, symbol_id)
+    _require_symbol_owner(symbol, user)
     news_inserted, disclosures_inserted = ensure_mock_activity(db, symbol)
     db.commit()
     return MockActivityResult(

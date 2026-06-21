@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 from fastapi import APIRouter, Depends
 
 from app.database import get_db
-from app.models import AnalysisResult, Disclosure, NewsItem, Symbol
+from app.models import AnalysisResult, Disclosure, NewsItem, Symbol, User
 from app.routers.auth import current_user
 from app.routers.symbols import research_symbol_ids
 from app.schemas import BriefItem, BriefPosition, PortfolioBrief, SymbolRead
@@ -33,11 +33,15 @@ def _latest_analysis(
 
 
 @router.get("/brief", response_model=PortfolioBrief)
-def get_portfolio_brief(db: Session = Depends(get_db)) -> PortfolioBrief:
+def get_portfolio_brief(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> PortfolioBrief:
     symbols = list(
         db.execute(
             select(Symbol)
             .options(joinedload(Symbol.holding))
+            .where(Symbol.owner_user_id == user.id)
             .order_by(Symbol.market.asc(), Symbol.code.asc())
         ).scalars()
     )
@@ -49,9 +53,11 @@ def get_portfolio_brief(db: Session = Depends(get_db)) -> PortfolioBrief:
     )
     positions: list[BriefPosition] = []
     latest_collected_at = None
+    owned_research_ids: set[int] = set()
 
     for symbol in symbols:
         research_ids = research_symbol_ids(db, symbol)
+        owned_research_ids.update(research_ids)
         news_count = db.execute(
             select(func.count())
             .select_from(NewsItem)
@@ -89,10 +95,15 @@ def get_portfolio_brief(db: Session = Depends(get_db)) -> PortfolioBrief:
             )
         )
 
+    # Latest activity is scoped to the caller's research universe so the brief
+    # never surfaces another user's news/disclosures. An empty universe yields
+    # an empty ``in_()`` and therefore no items.
+    research_id_list = sorted(owned_research_ids)
     news_items = list(
         db.execute(
             select(NewsItem, Symbol)
             .join(Symbol, Symbol.id == NewsItem.symbol_id)
+            .where(NewsItem.symbol_id.in_(research_id_list))
             .order_by(NewsItem.collected_at.desc())
             .limit(8)
         ).all()
@@ -101,6 +112,7 @@ def get_portfolio_brief(db: Session = Depends(get_db)) -> PortfolioBrief:
         db.execute(
             select(Disclosure, Symbol)
             .join(Symbol, Symbol.id == Disclosure.symbol_id)
+            .where(Disclosure.symbol_id.in_(research_id_list))
             .order_by(Disclosure.collected_at.desc())
             .limit(8)
         ).all()

@@ -11,12 +11,15 @@ from sqlalchemy.pool import StaticPool
 
 from fastapi import HTTPException
 
-from app.database import Base
+from app.database import Base, _backfill_symbol_owner
 from app.models import AnalysisResult, Disclosure, NewsItem, Symbol, User
 from app.routers.symbols import (
     _symbol_detail,
     create_symbol,
     delete_symbol,
+    get_symbol,
+    get_symbol_price_history,
+    list_symbols,
     research_symbol_ids,
     update_symbol,
 )
@@ -159,6 +162,93 @@ class SymbolOwnershipTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as ctx:
             update_symbol(orphan.id, SymbolPatch(memo="x"), db=self.db, user=user)
         self.assertEqual(ctx.exception.status_code, 403)
+
+    def test_reads_are_scoped_to_the_owner(self) -> None:
+        owner = self._user("owner@example.com")
+        intruder = self._user("intruder@example.com")
+        mine = create_symbol(
+            SymbolCreate(market="KOSPI", code="005930", name="삼성전자"),
+            db=self.db,
+            user=owner,
+        )
+
+        # The owner sees their symbol in the list and can open it.
+        listed = list_symbols(db=self.db, user=owner)
+        self.assertEqual([s.id for s in listed], [mine.id])
+        self.assertEqual(get_symbol(mine.id, db=self.db, user=owner).id, mine.id)
+
+        # A different account sees an empty list and 404s on the id (404, not
+        # 403, so it cannot probe which ids exist).
+        self.assertEqual(list_symbols(db=self.db, user=intruder), [])
+        for endpoint in (get_symbol, get_symbol_price_history):
+            with self.assertRaises(HTTPException) as ctx:
+                endpoint(mine.id, db=self.db, user=intruder)
+            self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_unowned_symbols_are_hidden_from_reads(self) -> None:
+        user = self._user("user@example.com")
+        orphan = Symbol(market="KOSPI", code="000660", name="SK하이닉스")
+        self.db.add(orphan)
+        self.db.commit()
+
+        self.assertEqual(list_symbols(db=self.db, user=user), [])
+        with self.assertRaises(HTTPException) as ctx:
+            get_symbol(orphan.id, db=self.db, user=user)
+        self.assertEqual(ctx.exception.status_code, 404)
+
+
+class BackfillSymbolOwnerTests(unittest.TestCase):
+    """The legacy-owner backfill claims pre-auth unowned symbols for the lone user."""
+
+    def setUp(self) -> None:
+        self.engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(self.engine)
+        self.db = sessionmaker(bind=self.engine, autoflush=False, autocommit=False)()
+
+    def tearDown(self) -> None:
+        self.db.close()
+        self.engine.dispose()
+
+    def _add_orphan(self, code: str) -> Symbol:
+        symbol = Symbol(market="KOSPI", code=code, name=code)
+        self.db.add(symbol)
+        self.db.commit()
+        return symbol
+
+    def test_single_user_claims_all_unowned_symbols(self) -> None:
+        user = User(email="solo@example.com")
+        self.db.add(user)
+        self.db.commit()
+        a = self._add_orphan("005930")
+        b = self._add_orphan("000660")
+
+        _backfill_symbol_owner(bind=self.engine)
+
+        self.db.expire_all()
+        self.assertEqual(self.db.get(Symbol, a.id).owner_user_id, user.id)
+        self.assertEqual(self.db.get(Symbol, b.id).owner_user_id, user.id)
+
+    def test_multiple_users_leaves_ownership_untouched(self) -> None:
+        self.db.add_all([User(email="a@example.com"), User(email="b@example.com")])
+        self.db.commit()
+        orphan = self._add_orphan("005930")
+
+        _backfill_symbol_owner(bind=self.engine)
+
+        self.db.expire_all()
+        self.assertIsNone(self.db.get(Symbol, orphan.id).owner_user_id)
+
+    def test_no_users_leaves_ownership_untouched(self) -> None:
+        orphan = self._add_orphan("005930")
+
+        _backfill_symbol_owner(bind=self.engine)
+
+        self.db.expire_all()
+        self.assertIsNone(self.db.get(Symbol, orphan.id).owner_user_id)
 
 
 class AnalysisOrphanCleanupTests(unittest.TestCase):
